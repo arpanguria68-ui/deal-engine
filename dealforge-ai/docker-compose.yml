@@ -1,0 +1,74 @@
+# DealForge AI — Full Project Docker Compose
+# Runs entire DealForge stack: Backend FastAPI + Frontend React (nginx)
+#
+# Usage:
+#   1. Edit the .env.docker file with your API keys
+#   2. docker compose --env-file .env.docker up --build -d
+#   3. Open http://localhost:3000 in browser
+#
+version: "3.9"
+
+services:
+  # ═══════════════════════════════ BACKEND ═══════════════════════════════
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: dealforge-backend
+    ports:
+      - "8000:8000"
+    environment:
+      # Database
+      - DATABASE_URL=sqlite+aiosqlite:///./dealforge.db
+      # App config
+      - DEBUG=${DEBUG:-false}
+      - DEFAULT_LLM_PROVIDER=${DEFAULT_LLM_PROVIDER:-gemini}
+      - PAGEINDEX_MODE=${PAGEINDEX_MODE:-local}
+      - PYTHONUNBUFFERED=1
+      # API Keys from .env.docker
+      - GEMINI_API_KEY=${GEMINI_API_KEY:-}
+      - MISTRAL_API_KEY=${MISTRAL_API_KEY:-}
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+      # Model overrides
+      - GEMINI_MODEL=${GEMINI_MODEL:-gemini-2.0-flash}
+      - MISTRAL_MODEL=${MISTRAL_MODEL:-mistral-large-latest}
+      - OPENAI_MODEL=${OPENAI_MODEL:-gpt-4o}
+    volumes:
+      # Persist SQLite DB across restarts
+      - dealforge-db:/app/data
+      # Persist user settings
+      - ./settings.json:/app/settings.json
+    healthcheck:
+      test: [ "CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')" ]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+    restart: unless-stopped
+    networks:
+      - dealforge-net
+
+  # ═══════════════════════════════ FRONTEND ══════════════════════════════
+  frontend:
+    build:
+      context: ../app
+      dockerfile: Dockerfile.docker
+    container_name: dealforge-frontend
+    ports:
+      - "3000:80"
+    environment:
+      - VITE_API_BASE=http://localhost:8000
+    depends_on:
+      backend:
+        condition: service_healthy
+    restart: unless-stopped
+    networks:
+      - dealforge-net
+
+volumes:
+  dealforge-db:
+
+
+networks:
+  dealforge-net:
+    driver: bridge

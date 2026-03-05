@@ -1,0 +1,103 @@
+# Omni-Finance Agentic System (OFAS) - Architecture & Design
+
+Based on insights gathered from NotebookLM, here is the proposed design for an agentic system that replicates the rigorous work of an investment banking analyst.
+
+## 1. Core Financial Functionalities & Workflows
+
+To effectively replicate top-tier analyst workflows, the system will implement the following:
+
+- **The Librarian (Data Ingestion & Formatting):** Handles OCR, layout detection, and structures 10-K/10-Q documents into a normalized payload. Reconciles different custom line items into a unified chart of accounts. Performs **check-sum validation** (e.g., Assets = Liabilities + Equity) iteratively. In an offline setup, it acts as the primary gatekeeper for document context.
+- **The Architect (Quantitative Modeling):** Executes 100% of quantitative modeling via Python sandboxes (DCF, LBO, M&A). Manages complex financial engineering, such as iterative debt waterfalls where excess FCF is swept to pay down debt tranches programmatically. **Outputs populate pre-formatted Excel templates.**
+- **The M&A Agent (Deal Diligence):** Specializes in extracting legal and operational risks from SPAs, APAs, and diligence reports. Automated data room analysis and draft-to-draft delta reporting are core functions.
+- **The Strategy Agent (Market Analysis):** Conducts high-level competitive landscaping, market sizing, and synergy validation. Utilizes peer clustering to identify risk-return profiles. 
+- **The Editor (Reporting):** Acts as a "Hybrid Banker," drafting Bulge Bracket-grade Investment Memos and generating institutional visualizations like Football Field validation ranges, Sankey cash flow diagrams, and Gantt timelines. **Outputs include boardroom-ready PowerPoint graphics.**
+- **The Senior Reviewer (Governance):** A specialized orchestration agent that validates junior agents' work. It enforces logical consistency, mathematical accuracy, and "Loop-Back" verification before any analysis is finalized.
+
+## 2. Specialized Agent Network
+
+To maximize the platform's power, a multi-agent swarm architecture is proposed, organized into sequential pipelines:
+
+### Core Orchestration Suite
+- **The Librarian:** The gateway agent responsible for data integrity, document ingestion, and JSON normalization.
+  - *Memory Architecture:* **Stable Chunking Memory** combined with short-term, document-specific working memory. This allows it to isolate specific sections of dense SEC filings (e.g., Risk Factors in Item 1A) and map them precisely.
+- **The Architect:** Handles quantitative financial modeling (DCF, LBO, M&A) with zero error tolerance.
+  - *Memory Architecture:* **Stateful Sandbox Memory**. Instead of heavy textual RAG retrieval, its memory holds the normalized `financial_payload.json` matrix and integrates live market data API calls.
+- **The M&A Agent:** Specialized in transaction structures and diligence tracking. 
+  - *Memory Architecture:* **Project-Isolated Memory**. Maintains list of deal risks and Diligence Tracker updates, with no cross-contamination between projects.
+- **The Strategy Agent:** Focuses on competitive intelligence and growth modeling. 
+  - *Memory Architecture:* **Sector-Specific RAG Memory**. Maintains deep context on specific industries and peer companies over multiple projects.
+- **The Senior Reviewer:** Enforces McKinsey-level rigor across the entire deal team.
+  - *Memory Architecture:* **Cross-Document Relational Memory**. It actively queries the `MemoryEntry` table for historical precedents, sector multiples, and past human corrections to catch errors.
+- **The Editor:** Synthesizes the raw data and quantitative outputs into institutional-grade investment memos and narratives.
+  - *Memory Architecture:* **Synthesized Context Memory**, which simultaneously holds the finalized outputs from the Librarian, Architect, and Strategist to draft cohesive reports.
+
+### Additional Specialized Agents
+- **PE Screening & Deal Flow Agent:** Analyzes CIMs against specific investment criteria.
+- **Financial Due Diligence Agent:** Normalizes data room documents to spot M&A red flags.
+- **Tax & Compliance Agents:** Reviews contracts and invoices for transfer pricing and regulatory issues.
+- **Account Reconciliation Agent:** Compares GL balances against bank statements to propose variance explanations.
+- **Legal & Contract Review Agent:** Extracts terms and flags risk factors in MSAs/Leases.
+- **Fraud & Anomaly Detection Agent:** Real-time transaction monitoring to freeze suspect activity.
+
+## 3. Cross-Document Memory & Learning (`MemoryEntry`)
+
+To bridge the 0/10 memory gap, the system implements a **Relational Memory System** using the existing `MemoryEntry` database:
+- **Precedent Transaction Logging:** Every finalized deal automatically writes its key metrics (valuation multiples, WACC, debt-to-equity) and red flags to the `MemoryEntry` table.
+- **Cross-Deal Intelligence:** At the start of a new project, agents query the table for historical sector data to benchmark management's "hockey stick" projections.
+- **Error Learning:** Corrections made by human analysts are logged as "Anti-Patterns" to prevent agents from repeating specific analytical flaws in future projects.
+
+## 4. Multi-Round Debate & Competitive Logic
+
+To elevate collaboration from 1/10 to McKinsey standards, the system introduces **Assumption Challenges**:
+- **Synergy Debates:** The Strategy Agent (proposing synergies) must defend its figures against the Architect (calculating cash flow impacts). If synergies exceed historical sector benchmarks found in the memory table, the system triggers a mandatory deep-dive.
+- **Senior Handoffs:** No output moves from "Proposed" to "Final" without the Senior Reviewer agent performing a NLI-based consistency check and a mathematical cross-footing of all tables.
+
+## 5. Offline VectifyAI/PageIndex RAG Integration
+
+**VectifyAI/PageIndex** serves as the core, highly efficient RAG document retrieval system, specifically configured for **offline, localized execution** within a bank-grade security perimeter.
+- **Security Gatekeeping:** The Librarian ensures that only local, project-specific directories are indexed by PageIndex, preventing data leakage.
+- **Expert Data Ingestion:** Expert Interview agents can be deployed to process call transcripts and live API data (SEC EDGAR, FMP), feeding them directly into the PageIndex knowledge base for real-time analysis instead of relying on mock data.
+- **No-Learning Mandate:** A hard-coded guardrail ensures that proprietary deal data is never used to train or adjust underlying model parameters.
+- **High-Fidelity Retrieval:** Enables the M&A Agent to perform semantic searches across thousands of data room documents to flag specific clauses (e.g., change-of-control).
+
+## 6. Financial & Strategic Guardrails & Orchestration
+
+To absolutely prevent hallucinations, false assumptions, or unsupported financial figures, especially in high-stakes M&A, the platform utilizes a rigid "trust-but-verify" guardrail system:
+
+- **Mathematical Check-Sums:** Built-in validation ensures that the Architect's LBO and DCF calculations match mathematical reality at every step.
+- **Exception Queue:** Low-confidence insights or conflicting data points between sources (e.g., conflicting tax statements) automatically trigger an "Exception Queue" for human analyst review.
+- **Synergy Gap Detection:** The Strategy Agent is forced to provide a "Synergy Bridge" report, where every proposed synergy is benchmarked against historical precedents in the PageIndex.
+- **Visual Grounding (Evidence Anchors):** Every extracted number or risk factor includes a clickable hyperlink directly to the exact page and line item in the source SEC or VDR document.
+- **HaluGate Verification Pipeline:** A two-stage "kill-switch" utilizing Natural Language Inference (NLI) to cross-reference narrative claims strictly against immutable ground-truth JSON payloads and Python execution logs.
+- **Institutional Output Formatting:** The system natively generates **Excel (.xlsx)** models with full formula transparency and **PowerPoint (.pptx)** charts using specialized export logic powered by the Architect and Editor.
+- **Editor "Loop-Back":** The Editor programmatically verifies that any number cited in its drafted prose matches the exact mathematical output generated by the Architect.
+
+## 5. Open-Source Tech Stack & Frameworks
+
+To operate on a strict budget, the system relies entirely on state-of-the-art open-source LLMs and frameworks:
+
+- **Librarian (Ingestion):** Powered by lightweight, fast models like **Llama 3.2 (1B)** or **Qwen 2.5 (0.5B)**. Uses **pandas** for data formatting and **pdfminer** for SEC filing extraction.
+- **Architect (Quantitative Modeling):** Powered by reasoning-heavy models like **DeepSeek-V3** or **Qwen 2.5 (7B)**.
+- **Strategist (Market Context):** Uses models like **Mistral Large** or **DeepSeek-V3**. Integrates **scikit-learn** for clustering comparables and **Node2Vec** for news relationship graphs.
+- **Editor (Reporting):** Uses **Granite 3.3 (via Ollama)** or **Llama 3.1 (8B)** to synthesize text.
+- **Guardrails (HaluGate):** Open-source "Kill-Switch" pipeline powered by **ModernBERT** (built on Rust/Candle for ultra-low latency) to detect contradictions between math outputs and narrative text.
+
+## 6. Tool Calling & Model Context Protocol (MCP)
+
+Agents connect to the external world safely through sandbox environments and specific MCP servers:
+- **Code Execution Sandbox:** **Pyodide (WebAssembly)** runs Python (NumPy/SciPy/pandas) securely within the client side, ensuring no arbitrary code escapes into the host system.
+- **Financial Modeling Prep (FMP) MCP:** Connects agents to live trading multiples, historical financial statements, and WACC inputs.
+- **SEC EDGAR REST API & yfinance:** For direct access to raw filings, risk-free rates, and market data.
+- **Visualization:** The Editor uses **Mermaid CLI (mmdc)**, specifically the `xychart-beta` syntax, to generate institutional-grade "Football Field" valuation charts natively.
+
+## 7. Phased Implementation Plan (Banking Focus)
+
+To show immediate value while securely managing risk for a banking environment, the system will be built in four distinct phases:
+
+- **Phase 1 (Weeks 1–4): Data Foundation.** Build The Librarian. Focus on automating ingestion bottlenecks by parsing 3-5 S-1s or 10-Ks. Establish read-only analysis and anomaly flagging.
+- **Phase 2 (Weeks 5–8): Structured Outputs.** Deploy The Architect. Implement the secure Pyodide sandbox for DCF and LBO modeling. Institute strict human-in-the-loop approvals for all math outputs.
+- **Phase 3 (Weeks 9–12): Live Integration.** Connect live APIs (SEC, FMP MCP, yfinance). Deploy The Editor to draft evidence-backed narratives based on live data.
+- **Phase 4 (Future): Advanced Strategy.** Deploy The Strategist for advanced tasks like "War Gaming" and competitive M&A scenario analysis.
+
+> [!TIP]
+> This modular architecture allows us to build the core agents (Librarian, Architect, Editor) first, and incrementally add specialized agents (Legal, Tax, Fraud) as the platform scales.

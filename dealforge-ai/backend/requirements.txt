@@ -1,0 +1,67 @@
+# FastAPI & Web
+fastapi
+uvicorn[standard]
+websockets
+python-socketio
+
+# Database
+sqlalchemy
+asyncpg
+alembic
+redis
+
+# LangGraph & AI
+langgraph
+langchain
+langchain-openai
+openai
+google-generativeai
+mistralai
+
+# Pydantic & Validation
+pydantic
+pydantic-settings
+
+# HTTP Clients
+httpx
+aiohttp
+
+# Document Processing
+pypdf
+python-docx
+openpyxl
+pandas
+
+# PageIndex (self-hosted RAG fallback will be used)
+pymupdf
+tiktoken
+pyyaml
+
+# External Data Tools
+duckduckgo-search
+beautifulsoup4
+
+# Report Generation (McKinsey-style)
+python-pptx
+fpdf2
+
+# Utilities
+python-multipart
+python-jose[cryptography]
+passlib[bcrypt]
+python-dotenv
+structlog
+orjson
+
+# Testing
+pytest
+pytest-asyncio
+httpx
+
+# Visualization & Infographics
+matplotlib
+seaborn
+plotly
+kaleido
+reportlab
+xlsxwriter

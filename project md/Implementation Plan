@@ -1,0 +1,138 @@
+# DealForge AI — Implementation Plan
+
+Based on analysis of `prd_improved.md` and the existing codebase at `F:\code project\Kimi_Agent_DealForge AI PRD\dealforge-ai\`.
+
+---
+
+## Codebase Audit Summary
+
+### What's Already Built (✅)
+| Component | File | Status |
+|-----------|------|--------|
+| BaseAgent (ABC, tool-calling, reflection) | `agents/base.py` | ✅ Functional |
+| FinancialAnalyst | `agents/financial_analyst.py` | ✅ Functional (mock logic) |
+| LegalAdvisor | `agents/legal_advisor.py` | ✅ Functional |
+| MarketResearcher + DebateModerator + ScoringAgent | `agents/market_researcher.py` | ✅ Functional |
+| RiskAssessor + MarketRiskAgent | `agents/risk_assessor.py` | ✅ Functional |
+| LangGraph Orchestrator (6-node graph) | `orchestrator/graph.py` | ✅ Full pipeline |
+| DealState Schema | `orchestrator/state.py` | ✅ Pydantic + TypedDict |
+| PostgreSQL Models (Deal, Document, AgentRun, MemoryEntry) | `db/models.py` | ✅ Complete |
+| PageIndex Client + **Local Self-Hosted** (on-system, offline) | `core/memory/` | ✅ Implemented |
+| Gemini/OpenAI/Mistral LLM Clients | `core/llm/gemini_client.py` | ✅ Multi-provider |
+| Reflection + Reward Engine | `core/reflection/reflection_engine.py` | ✅ Scoring pipeline |
+| Deal Scorer + Risk Model | `core/scoring/deal_scorer.py` | ✅ Weighted scoring |
+| Tool Router (with MCP-style registration) | `core/tools/tool_router.py` | ✅ Dynamic routing |
+| FastAPI App (CRUD + WebSocket + Scoring) | `main.py` | ✅ Full API |
+| Docker + docker-compose | Root | ✅ Containerized |
+
+### What's Missing per the PRD (❌)
+| PRD Requirement | Gap |
+|-----------------|-----|
+| **MECE Issue Tree** reasoning in `BaseAgent.run()` | ❌ Not implemented |
+| **HaluGate NLI** verification layer | ❌ Not implemented |
+| **Pyodide Sandbox** for deterministic math | ❌ Uses direct Python, not WASM-sandboxed |
+| **xlwings/Excel Formula DNA** binding | ❌ No Excel output logic |
+| **Red Team / Strategic Silence Detector** agent | ❌ Not implemented |
+| **GP-Led Continuation Vehicle** workflow | ❌ Not implemented |
+| **Liability Management (LMT)** simulation | ❌ Not implemented |
+| **Stub Period Handling** (mid-year convention) | ❌ Not in financial_analyst |
+| **Non-GAAP Excision** logic | ❌ Not implemented |
+| **Escalation Kill-Switch UI** | ❌ Frontend not built |
+| **Cross-deal MemoryEntry read/write** in agents | ❌ Schema exists, no agent uses it |
+
+---
+
+## Proposed Changes (4-Week Sprint)
+
+### Week 1: Ingestion & Invariants
+
+#### [MODIFY] `agents/base.py`
+- Add `generate_issue_tree()` method that produces a MECE branching structure before any retrieval or modeling.
+- Add `validate_mece()` internal check that verifies branches are collectively exhaustive per deal type.
+- Refactor `run()` to call `generate_issue_tree()` → `retrieve_context()` → `generate_with_tools()`.
+
+#### [MODIFY] `agents/financial_analyst.py`
+- Replace mock valuation logic with structured DCF/LBO calculation stubs.
+- Implement "Unit of Account" validation for consistent currency handling.
+- Add stub period handling (mid-year convention discounting).
+
+#### [MODIFY] `core/memory/local_pageindex.py`
+- **All indexing and retrieval runs 100% on-system** — no cloud calls. VectifyAI/PageIndex is self-hosted and operates within the local machine's file system, ensuring bank-grade data isolation.
+- Add OCR ingestion pipeline using `pdfminer` for SEC filings.
+- Implement definition-drift detection (e.g., EBITDA reconciliation between Credit and Purchase agreements).
+
+---
+
+### Week 2: Structural Reasoning & Red Team
+
+#### [NEW] `agents/red_team_agent.py`
+- Implement the **Strategic Silence Detector** as a new agent.
+- Heuristic: Flag branches of the MECE issue tree where "No Data Found" despite management claiming completeness.
+- Register as a mandatory post-analysis check in the orchestrator.
+
+#### [MODIFY] `orchestrator/graph.py`
+- Add a `red_team` node between `debate` and `scoring` in the LangGraph.
+- Add `_node_red_team()` method that runs the Strategic Silence Detector.
+- Add conditional edge: if Red Team flags ≥ Severity 3, loop back to `parallel_analysis`.
+
+#### [MODIFY] `orchestrator/state.py`
+- Add `issue_tree: Dict` and `red_team_flags: List[Dict]` fields to `DealState`.
+
+---
+
+### Week 3: Quantitative Rigor & HaluGate
+
+#### [NEW] `core/halugate/nli_engine.py`
+- Implement the **HaluGate** NLI classification layer.
+- Classify every qualitative claim as *Entailment*, *Neutral*, or *Contradiction* against the `financial_payload.json`.
+- Use a lightweight open-source NLI model (e.g., `cross-encoder/nli-deberta-v3-base`).
+
+#### [NEW] `core/halugate/non_gaap_detector.py`
+- Build a pattern matcher for aggressive add-backs in MD&A and earnings call transcripts.
+
+#### [MODIFY] `agents/financial_analyst.py`
+- Integrate Pyodide (or direct Python sandbox) for deterministic DCF and LBO execution.
+- Port ARO, DTA/DTL, and NWC algebraic reduction formulas into the agent.
+
+#### [NEW] `services/excel_generator.py`
+- Implement `xlwings`-based Excel Formula DNA binding.
+- Inject active formulas (e.g., `=MIN(Balance, Cash*Sweep%)`) into templates.
+
+---
+
+### Week 4: Human-in-the-Loop & Advanced Workflows
+
+#### [NEW] `workflows/gp_led_cv.py`
+- Implement the GP-Led Continuation Vehicle simulation workflow:
+  1. Librarian ingests LPA + Bid Spread data room.
+  2. Strategist branches into MECE nodes (Price Fairness, Economic Parity, Governance Integrity).
+  3. Architect solves circular debt waterfalls iteratively.
+  4. Editor renders Mermaid Sankey diagrams with audit citations.
+
+#### [NEW] `workflows/lmt_simulation.py`
+- Implement the Liability Management stressed borrower simulation:
+  - Loophole Detection (drop-downs, double dips, up-tiers).
+  - Monte Carlo recovery modeling (10,000 iterations with standard error convergence).
+
+#### [MODIFY] `main.py`
+- Add WebSocket endpoint for **Heartbeat**: Tax Agent triggers force immediate IRR re-computation.
+- Add `/api/v1/escalation` endpoint for the Kill-Switch UI.
+
+#### [MODIFY] `db/models.py`
+- Add `RED_TEAM = "red_team"` to `AgentType` enum.
+- Wire `MemoryEntry` read/write into agent `run()` methods.
+
+---
+
+## Verification Plan
+
+### Automated Tests
+1. **MECE Validation**: Unit test that `generate_issue_tree()` returns non-overlapping, exhaustive branches for 3 deal types.
+2. **HaluGate Accuracy**: Benchmark NLI against 50 labeled claim-evidence pairs (target: >85%).
+3. **Financial Integrity**: Mock LBO with known inputs; assert output matches expected IRR/MOIC to 2 decimal places.
+4. **Red Team Coverage**: Deliberately incomplete data room triggers ≥1 Strategic Silence flag.
+
+### Manual Verification
+1. **Escalation UI**: Trigger Severity 4 HaluGate event; verify Kill-Switch blocks output.
+2. **Excel Output**: Open generated `.xlsx`; verify formulas are active (not flat values).
+3. **End-to-End GP-Led CV**: Run full workflow; inspect Sankey diagram for audit trail completeness.

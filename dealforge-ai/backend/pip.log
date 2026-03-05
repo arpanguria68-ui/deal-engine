@@ -1,0 +1,68 @@
+2026-03-02T11:39:16,763 Using pip 25.3 from F:\code project\Kimi_Agent_DealForge AI PRD\dealforge-ai\backend\venv\Lib\site-packages\pip (python 3.13)
+2026-03-02T11:39:16,766 Non-user install because user site-packages disabled
+2026-03-02T12:02:30,269 Remote version of pip: 26.0.1
+2026-03-02T12:02:30,271 Local version of pip:  25.3
+2026-03-02T12:02:30,307 Was pip installed by pip? True
+2026-03-02T12:02:30,307 WARNING: UpgradePrompt(old='25.3', new='26.0.1')
+2026-03-02T12:02:30,325 ERROR: Operation cancelled by user
+2026-03-02T12:02:30,325 Exception information:
+2026-03-02T12:02:30,325 Traceback (most recent call last):
+2026-03-02T12:02:30,325   File "C:\Program Files\WindowsApps\PythonSoftwareFoundation.Python.3.13_3.13.3312.0_x64__qbz5n2kfra8p0\Lib\platform.py", line 330, in _wmi_query
+2026-03-02T12:02:30,325     data = _wmi.exec_query("SELECT {} FROM {}".format(
+2026-03-02T12:02:30,325            ~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+2026-03-02T12:02:30,325         ",".join(keys),
+2026-03-02T12:02:30,325         ^^^^^^^^^^^^^^^
+2026-03-02T12:02:30,325         table,
+2026-03-02T12:02:30,325         ^^^^^^
+2026-03-02T12:02:30,325     )).split("\0")
+2026-03-02T12:02:30,325     ^^
+2026-03-02T12:02:30,325 OSError: [WinError -2147217358] Windows Error 0x80041032
+2026-03-02T12:02:30,325 
+2026-03-02T12:02:30,325 During handling of the above exception, another exception occurred:
+2026-03-02T12:02:30,325 
+2026-03-02T12:02:30,325 Traceback (most recent call last):
+2026-03-02T12:02:30,325   File "F:\code project\Kimi_Agent_DealForge AI PRD\dealforge-ai\backend\venv\Lib\site-packages\pip\_internal\cli\base_command.py", line 107, in _run_wrapper
+2026-03-02T12:02:30,325     status = _inner_run()
+2026-03-02T12:02:30,325   File "F:\code project\Kimi_Agent_DealForge AI PRD\dealforge-ai\backend\venv\Lib\site-packages\pip\_internal\cli\base_command.py", line 98, in _inner_run
+2026-03-02T12:02:30,325     return self.run(options, args)
+2026-03-02T12:02:30,325            ~~~~~~~~^^^^^^^^^^^^^^^
+2026-03-02T12:02:30,325   File "F:\code project\Kimi_Agent_DealForge AI PRD\dealforge-ai\backend\venv\Lib\site-packages\pip\_internal\cli\req_command.py", line 85, in wrapper
+2026-03-02T12:02:30,325     return func(self, options, args)
+2026-03-02T12:02:30,325   File "F:\code project\Kimi_Agent_DealForge AI PRD\dealforge-ai\backend\venv\Lib\site-packages\pip\_internal\commands\install.py", line 336, in run
+2026-03-02T12:02:30,325     session = self.get_default_session(options)
+2026-03-02T12:02:30,325   File "F:\code project\Kimi_Agent_DealForge AI PRD\dealforge-ai\backend\venv\Lib\site-packages\pip\_internal\cli\index_command.py", line 80, in get_default_session
+2026-03-02T12:02:30,325     self._session = self.enter_context(self._build_session(options))
+2026-03-02T12:02:30,325                                        ~~~~~~~~~~~~~~~~~~~^^^^^^^^^
+2026-03-02T12:02:30,325   File "F:\code project\Kimi_Agent_DealForge AI PRD\dealforge-ai\backend\venv\Lib\site-packages\pip\_internal\cli\index_command.py", line 99, in _build_session
+2026-03-02T12:02:30,325     ssl_context = _create_truststore_ssl_context()
+2026-03-02T12:02:30,325   File "F:\code project\Kimi_Agent_DealForge AI PRD\dealforge-ai\backend\venv\Lib\site-packages\pip\_internal\cli\index_command.py", line 44, in _create_truststore_ssl_context
+2026-03-02T12:02:30,325     from pip._vendor import truststore
+2026-03-02T12:02:30,325   File "F:\code project\Kimi_Agent_DealForge AI PRD\dealforge-ai\backend\venv\Lib\site-packages\pip\_vendor\truststore\__init__.py", line 31, in <module>
+2026-03-02T12:02:30,325     from ._api import SSLContext, extract_from_ssl, inject_into_ssl  # noqa: E402
+2026-03-02T12:02:30,325     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+2026-03-02T12:02:30,325   File "F:\code project\Kimi_Agent_DealForge AI PRD\dealforge-ai\backend\venv\Lib\site-packages\pip\_vendor\truststore\_api.py", line 19, in <module>
+2026-03-02T12:02:30,325     if platform.system() == "Windows":
+2026-03-02T12:02:30,325        ~~~~~~~~~~~~~~~^^
+2026-03-02T12:02:30,325   File "C:\Program Files\WindowsApps\PythonSoftwareFoundation.Python.3.13_3.13.3312.0_x64__qbz5n2kfra8p0\Lib\platform.py", line 1073, in system
+2026-03-02T12:02:30,325     return uname().system
+2026-03-02T12:02:30,325            ~~~~~^^
+2026-03-02T12:02:30,325   File "C:\Program Files\WindowsApps\PythonSoftwareFoundation.Python.3.13_3.13.3312.0_x64__qbz5n2kfra8p0\Lib\platform.py", line 999, in uname
+2026-03-02T12:02:30,325     release, version, csd, ptype = win32_ver()
+2026-03-02T12:02:30,325                                    ~~~~~~~~~^^
+2026-03-02T12:02:30,325   File "C:\Program Files\WindowsApps\PythonSoftwareFoundation.Python.3.13_3.13.3312.0_x64__qbz5n2kfra8p0\Lib\platform.py", line 450, in win32_ver
+2026-03-02T12:02:30,325     version, csd, ptype, is_client = _win32_ver(version, csd, ptype)
+2026-03-02T12:02:30,325                                      ~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^
+2026-03-02T12:02:30,325   File "C:\Program Files\WindowsApps\PythonSoftwareFoundation.Python.3.13_3.13.3312.0_x64__qbz5n2kfra8p0\Lib\platform.py", line 391, in _win32_ver
+2026-03-02T12:02:30,325     (version, product_type, ptype, spmajor, spminor)  = _wmi_query(
+2026-03-02T12:02:30,325                                                         ~~~~~~~~~~^
+2026-03-02T12:02:30,325         'OS',
+2026-03-02T12:02:30,325         ^^^^^
+2026-03-02T12:02:30,325     ...<4 lines>...
+2026-03-02T12:02:30,325         'ServicePackMinorVersion',
+2026-03-02T12:02:30,325         ^^^^^^^^^^^^^^^^^^^^^^^^^^
+2026-03-02T12:02:30,325     )
+2026-03-02T12:02:30,325     ^
+2026-03-02T12:02:30,325   File "C:\Program Files\WindowsApps\PythonSoftwareFoundation.Python.3.13_3.13.3312.0_x64__qbz5n2kfra8p0\Lib\platform.py", line 336, in _wmi_query
+2026-03-02T12:02:30,325     raise OSError("not supported")
+2026-03-02T12:02:30,325           ~~~~~~~^^^^^^^^^^^^^^^^^
+2026-03-02T12:02:30,325 KeyboardInterrupt

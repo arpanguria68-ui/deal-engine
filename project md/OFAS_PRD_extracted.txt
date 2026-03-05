@@ -1,0 +1,768 @@
+Product Requirements Document: OFAS Multi-Agent Financial Analysis System
+Version: 1.0Date: March 4, 2026Owner: Arpan GuriaStatus: Draft for Implementation
+1. Executive Summary
+1.1 Product Vision
+OFAS (Orchestrated Financial Analysis System) is an autonomous multi-agent AI system that replicates the complete workflow of a professional M&A/PE deal team. The system ingests financial data, builds institutional-grade Excel models with formulas intact, conducts valuation analysis, performs due diligence, and generates client-ready deliverables (IC memos, pitch decks, research notes) with full audit trails and citations[1][2][3].
+1.2 Business Objectives
+Replace 80+ hours of manual analyst work per deal with 4–6 hours of AI-orchestrated execution
+Maintain institutional quality standards: Excel models with formulas, not hard-coded values; auditable assumptions with RAG citations
+Enable scalability: Process 10–20 deals simultaneously vs. 2–3 with human teams
+Reduce errors: Automated compliance checks, balance sheet reconciliation, citation validation
+1.3 Success Metrics
+Metric
+Target
+Measurement
+Time to first draft IC memo
+< 4 hours
+End-to-end from ticker input to deliverable
+Model accuracy (vs. human)
+> 95%
+Financial statement ties, formula integrity
+Citation coverage
+100%
+Every factual claim traceable to source
+Revision cycles
+< 2
+Before client-ready status
+2. System Architecture
+2.1 Technology Stack
+Layer
+Technology
+Purpose
+Orchestration
+LangGraph (StateGraph)
+Multi-agent workflow coordination
+LLM
+GPT-4, Claude 3.5 Sonnet, Gemini
+Reasoning, analysis, report writing
+Vector Store
+LanceDB
+RAG for filings, transcripts, research
+Tools
+Model Context Protocol (MCP)
+Excel, data APIs, web search
+Excel Engine
+openpyxl, xlsxwriter
+Template-based modeling with formulas
+Data Sources
+SEC EDGAR (XBRL), Yahoo Finance, FRED
+Financial statements, pricing, macro
+Document Gen
+python-docx, python-pptx
+IC memos, pitch decks
+Compliance
+Rule engine + LLM validation
+Balance sheet checks, citation audit
+Table 1: OFAS Technology Stack
+2.2 Agent Architecture (RACI-Based)
+The system implements seven specialized agents with clear RACI (Responsible, Accountable, Consulted, Informed) delegation[4][5][6].
+Agent
+Responsibilities
+RACI Role
+Supervisor
+Mission control: task planning, quality gates, final approval
+A (Accountable)
+Data Ingestion (Librarian)
+Fetch financials, filings, news; normalize data; build RAG index
+R (Responsible)
+Excel Modeling (Architect)
+Populate templates with formulas; DCF, 3-statement, scenarios
+R (Responsible)
+Valuation Specialist
+Comps, transactions, football field, sensitivity analysis
+R (Responsible)
+M&A / DD Agent
+Extract risks, synergies, integration issues from filings
+R (Responsible)
+Reporting Agent
+Draft IC memos, equity notes with citations
+R (Responsible)
+Compliance / QA
+Validate numbers, formulas, citations; enforce disclaimers
+R (Responsible)
+Table 2: Agent Roles and RACI Assignments
+2.3 Workflow Loop (Mission Control Pattern)
+Execution Flow:
+Supervisor receives objective (e.g., "Evaluate acquisition of TargetCo for $500M")
+Creates tasks with RACI matrix:
+Task 1: Data ingestion → Librarian (R), Supervisor (A)
+Task 2: Build 3-statement + DCF → Architect (R), Supervisor (A), Valuation (C)
+Task 3: Comps analysis → Valuation (R), Supervisor (A), Architect (C)
+Task 4: Risk DD → M&A Agent (R), Supervisor (A)
+Task 5: IC memo → Reporting (R), Supervisor (A), all others (C)
+Task 6: Compliance review → Compliance (R), Supervisor (A)
+Sequential execution with feedback:
+Each agent updates task status: pending → running → done or blocked
+Issues logged with severity (info, warn, error) and ownership
+If blocked or error: Supervisor routes to responsible agent for fix
+Quality gates:
+After Architect: Compliance validates balance sheet, cash ties
+After Reporting: Compliance validates citation coverage, number consistency
+Only when all tasks done and no error issues → mission_status: ready_for_client
+3. Core Features
+3.1 Data Ingestion & RAG (Librarian Agent)
+3.1.1 Data Sources
+SEC EDGAR: 10-K, 10-Q, 8-K filings via XBRL API[7][8]
+Financial APIs: Yahoo Finance (pricing, ratios), Alpha Vantage, Polygon.io
+Macro data: FRED API (interest rates, GDP, inflation)
+News & transcripts: Web scraping, Seeking Alpha transcripts
+Internal documents: User-uploaded PDFs, management presentations
+3.1.2 RAG Index Construction
+Parse documents into chunks (512–1024 tokens)
+Embed with text-embedding-3-large or equivalent
+Store in LanceDB with metadata:
+source_type: filing, transcript, news, internal
+ticker, fiscal_period, page_number, section_name
+chunk_id for citation linking
+Build hybrid index: vector + keyword (BM25) for high recall[1][9]
+3.1.3 Outputs
+{"ticker": "MSFT","currency": "USD","fiscal_years": [2021, 2022, 2023, 2024],"income_statement": [...],"balance_sheet": [...],"cash_flow": [...],"rag_index_path": "lancedb://ofas/msft_2024","metadata": {"filing_count": 8,"chunk_count": 1247,"last_updated": "2026-03-04T21:45:00Z"}}
+3.2 Excel Modeling (Architect Agent)
+3.2.1 Template Library
+The system uses professional Excel templates attached to this PRD as baseline models[10][11][12]:
+Template File
+Use Case
+Key Sheets
+181_Excel_Three-statement-model-1.xlsx
+Integrated financials
+IS, BS, CF, Assumptions
+6_dcf_model_1_0.xlsx
+DCF valuation
+WACC, FCF, Terminal Value
+9_fcfe_model_0_0.xlsx
+Equity valuation
+FCFE, Cost of Equity
+11_sensitivity_analysis_model_0_0.xlsx
+Scenario analysis
+2D tables, tornado charts
+Accretion-Dilution-Model.xlsx
+M&A impact
+Pro forma EPS, accretion
+Cap-Table-and-Exit-Waterfall-Tool
+PE/VC deals
+Ownership, returns by class
+Enterprise-SaaS-Forecasting-Tool
+SaaS targets
+ARR, churn, CAC, LTV
+IQRM_MonteCarlo_Template_Full.xlsx
+Risk modeling
+Monte Carlo simulations
+Table 3: Excel Template Library
+3.2.2 Model Population Process
+Step 1: Template Selection
+Based on deal type:
+Standard corporate → 3-statement + DCF
+M&A → Accretion/Dilution + 3-statement
+SaaS → SaaS forecasting + DCF
+PE/VC → Cap table + waterfall
+Step 2: Input Mapping
+Load template using openpyxl[13]
+Identify input cells (typically color-coded blue or named ranges)
+Map API data to input cells:
+Example: Populate revenue inputs
+ws_inputs = wb['Assumptions']ws_inputs['B5'] = financial_data['revenue'][2021] # Historicalws_inputs['B6'] = financial_data['revenue'][2022]ws_inputs['B7'] = financial_data['revenue'][2023]ws_inputs['B8'] = 0.12 # Growth assumption
+Step 3: Formula Preservation
+CRITICAL: Never overwrite formula cells[1][2]
+Only write to designated input/assumption cells
+All calculation cells retain original formulas:
+Revenue forecasts: =B7 * (1 + B8)
+EBITDA: =Revenue - COGS - OpEx + D&A
+Free Cash Flow: =EBITDA * (1 - TaxRate) - CapEx - ΔWC
+Enterprise Value: =NPV(WACC, FCF_range) + TerminalValue
+Step 4: Assumption Documentation
+Add cell comments with RAG citations:
+from openpyxl.comments import Comment
+comment = Comment("Source: 10-K 2023, MD&A, page 35\n""Historical CAGR: 11.2%\n""Management guidance: 10-15% through 2026\n""RAG chunk_id: msft_2024_chunk_847","OFAS Architect Agent")ws_inputs['B8'].comment = comment
+Step 5: Quality Checks
+Balance sheet balances: Assets = Liabilities + Equity
+Cash flow ties: Beginning Cash + CFO + CFI + CFF = Ending Cash
+P&L to cash flow reconciliation
+All checks logged as issues if fail
+3.2.3 Outputs
+Excel file: {ticker}_{model_type}_v{version}.xlsx with formulas intact
+Summary JSON:
+{"model_path": "MSFT_3statement_dcf_v1.xlsx","valuation": {"dcf_equity_value": 2_500_000,"shares_outstanding": 7_430,"implied_price_per_share": 336.5,"current_price": 420.0,"upside_downside": -0.199,"wacc": 0.095,"terminal_growth": 0.025,"forecast_period": 5},"financials": {"revenue_cagr_historical": 0.112,"revenue_cagr_forecast": 0.098,"ebitda_margin_avg": 0.421,"fcf_margin_avg": 0.285,"net_debt": -50_000},"checks": {"balance_sheet_balanced": true,"cash_reconciles": true,"circular_references": false},"issues": []}
+Key tables as CSV: Summary P&L, BS, CF for downstream agents
+Charts as PNG: Revenue/EBITDA waterfall, valuation bridge, sensitivity table
+3.3 Valuation & Comps (Valuation Specialist Agent)
+3.3.1 Comparable Companies Analysis
+Data Collection
+Identify peers based on:
+Sector classification (GICS, SIC)
+Geography and market cap
+Business model similarity
+Fetch metrics via API:
+Market cap, enterprise value
+Revenue, EBITDA, EBIT, Net Income
+Multiples: EV/Revenue, EV/EBITDA, P/E, P/B
+Analysis
+Compute quartiles (25th, median, 75th percentiles)
+Adjust for differences (growth, margins, leverage)
+Calculate implied valuation range
+Output: Football Field Chart
+Use template: Football-field-template.xlsx[14]
+Populate ranges for:
+Trading comps (low, median, high)
+Transaction comps
+DCF (bear, base, bull)
+Other methods (LBO, NAV, etc.)
+Export to PNG for deck insertion
+3.3.2 Precedent Transactions
+Query M&A databases or web sources
+Filter by sector, size, timing (last 3–5 years)
+Extract multiples paid (EV/Revenue, EV/EBITDA)
+Adjust for market conditions, premiums
+3.3.3 Sensitivity Analysis
+Use template: 11_sensitivity_analysis_model_0_0.xlsx[15]
+Two-way tables:
+WACC (8%–12%) × Terminal Growth (1.5%–3%)
+Revenue CAGR (5%–15%) × EBITDA Margin (25%–45%)
+Tornado chart: rank assumption impact on valuation
+3.3.4 Outputs
+{"comps_summary": {"peer_count": 12,"ev_ebitda_median": 14.2,"ev_ebitda_range": [11.5, 18.3],"implied_value_low": 2_200_000,"implied_value_high": 2_800_000},"transactions_summary": {"deal_count": 8,"ev_ebitda_median": 15.8,"premium_median": 0.32},"football_field_path": "MSFT_football_field.png","sensitivity_tables": [...]}
+3.4 Due Diligence & Risk (M&A / DD Agent)
+3.4.1 Risk Extraction
+Query RAG index for:
+Risk Factors section (10-K Item 1A)
+Legal proceedings (Item 3)
+MD&A contingencies
+Earnings call questions on risks
+Use NER and LLM to categorize:
+Customer concentration
+Regulatory/compliance
+Litigation
+Technology/IP
+Market/competitive
+Integration (for M&A)
+3.4.2 Quantification
+Map qualitative risks to financial impact:
+"Top 3 customers = 45% revenue" → downside scenario: -10% revenue if one lost
+"Pending DOJ investigation" → litigation reserve estimate
+"Debt covenants" → calculate headroom at forecast EBITDA
+3.4.3 Synergy Analysis (M&A Deals)
+Extract management synergy guidance
+Benchmark vs. industry precedents
+Risk-adjust (probability-weight)
+Model impact on pro forma financials
+3.4.4 Outputs
+{"risk_summary": [{"category": "customer_concentration","description": "Top 3 customers represent 42% of revenue","severity": "high","financial_impact": "10% revenue loss if largest customer churns","mitigation": "Diversification strategy in place","sources": ["10-K 2023 p.18", "chunk_id: msft_risk_423"]},...],"synergies": {"cost_synergies": 50_000,"revenue_synergies": 30_000,"one_time_costs": 80_000,"probability_adjusted_npv": 120_000}}
+3.5 Report Generation (Reporting Agent)
+3.5.1 IC Memo Structure
+The agent generates a structured Investment Committee memo with the following sections[2][16]:
+Executive Summary
+Investment thesis (3-5 bullets)
+Valuation summary and recommendation
+Key risks and mitigants
+Business Overview
+Company description, history, ownership
+Products/services and end markets
+Competitive positioning
+Financial Performance
+Historical trends (3-5 years): revenue, margins, cash flow
+Quality of earnings assessment
+Working capital and capex requirements
+Valuation
+DCF: key assumptions (WACC, growth, margin), implied value, sensitivity
+Comparable companies: peer positioning, multiple ranges
+Transaction precedents (if applicable)
+Football field summary
+Investment Highlights
+Growth drivers
+Operational improvements / value creation levers
+Management quality
+Key Risks
+Downside scenarios with quantified impact
+Mitigating factors
+Recommendation
+Proceed / Don't Proceed (or Buy/Hold/Sell for equity research)
+Suggested price range or offer structure
+Appendices
+Detailed financial model outputs
+Management bios
+Market research
+3.5.2 Citation Requirements
+Every factual claim must be cited[17]:
+Inline numbered citations: [1], [2], [3]
+References section at end with full source details
+Citation format (APA 7th default):
+References
+[1] Microsoft Corporation. (2023). Form 10-K for fiscal year ended June 30, 2023.SEC EDGAR. https://www.sec.gov/...
+[2] Smith, J., & Lee, A. (2024). Cloud computing market trends.Tech Industry Journal, 15(2), 45-67. https://doi.org/10.xxxx/xxxxx
+[3] Microsoft Corporation. (2024, January 25). Q2 FY2024 earnings call transcript.Seeking Alpha. https://seekingalpha.com/...
+3.5.3 Number Accuracy
+All financial figures pulled directly from model summary JSON
+No re-inference or rounding errors
+Format consistently: millions with commas, percentages to 1 decimal
+3.5.4 Outputs
+Word document: {ticker}_IC_Memo_v{version}.docx
+PDF export: Auto-generated from DOCX
+Metadata JSON: Track which model version, RAG index, assumptions used
+3.6 Deck Assembly (Editor Agent)
+3.6.1 Slide Structure
+Standard IC presentation deck (10–15 slides)[18]:
+Title slide: Deal name, date, team
+Executive summary: Thesis, valuation, recommendation
+Business overview: Products, markets, competitive position
+Historical financials: Revenue/EBITDA/FCF charts (3–5 years)
+Forecast assumptions: Growth drivers, margin trajectory
+Valuation summary: DCF outputs, WACC build, terminal value
+Football field: Comps, transactions, DCF ranges
+Sensitivity analysis: 2-way tables, tornado chart
+Investment highlights: 3–5 key value drivers
+Key risks: Top 3–5 risks with mitigation
+Transaction structure (if M&A): Sources & uses, pro forma ownership
+Recommendation: Clear proceed/pass with rationale
+Appendices: Detailed model outputs, assumptions, sources
+3.6.2 Chart Integration
+Import PNG exports from Excel Modeling and Valuation agents
+Auto-place on designated slide templates
+Add titles and source notes
+3.6.3 Text Generation
+Pull section summaries from Reporting Agent's IC memo
+Convert to bullet points (3–5 per slide, max 10 words each)
+Reference slide number for charts and tables
+3.6.4 Outputs
+PowerPoint file: {ticker}_IC_Deck_v{version}.pptx
+PDF export: For distribution
+3.7 Compliance & QA (Compliance Agent)
+3.7.1 Automated Checks
+Check Category
+Validation
+Action if Fail
+Financial Model
+BS balances, cash ties, no circular refs
+Block task, route to Architect
+Citation Coverage
+Every claim has [N], every [N] in References
+Block task, route to Reporting
+Number Consistency
+Figures in text match model JSON exactly
+Block task, route to Reporting
+Disclaimer Presence
+Risk disclaimers, forward-looking statements
+Warn, auto-insert if missing
+Formula Integrity
+All formula cells unchanged in Excel output
+Block task, route to Architect
+Source Traceability
+Every assumption links to RAG chunk_id
+Warn, flag for manual review
+Table 4: Compliance Validation Rules
+3.7.2 Issue Logging
+Every check failure creates an Issue object:
+{"msg": "Balance sheet does not balance: Assets 1,250 vs. L+E 1,248","owner": "architect","severity": "error","task_id": "model","timestamp": "2026-03-04T22:15:33Z"}
+error severity blocks mission completion
+warn severity allows completion but flags for review
+info severity is informational only
+3.7.3 Feedback Loop
+If issues exist after agent completes task:
+Supervisor routes back to responsible agent
+Agent re-runs with issue context
+Maximum 3 retry cycles before escalating to human
+4. State Management
+4.1 LangGraph State Schema
+from typing import TypedDict, List, Dict, Literal, Optional
+class Issue(TypedDict):msg: strowner: str # which agent should fixseverity: Literal["info", "warn", "error"]task_id: strtimestamp: str
+class Task(TypedDict):id: strname: strraci: Dict[str, List[str]] # {"R": [...], "A": [...], "C": [...], "I": [...]}status: Literal["pending", "running", "done", "blocked"]outputs: Dict | Noneissues: List[Issue]dependencies: List[str] # task IDs that must complete first
+class DealState(TypedDict):# Mission-leveldeal_id: strticker: strobjective: strconstraints: List[str]mission_status: Literal["planning", "in_progress", "review", "ready_for_client"]
+# Task trackingtasks: List[Task]# Artifactsartifacts: Dict[str, str]    # {"model_path": "...", "memo_path": "...", ...}# Quality metricsquality: Dict[str, float]    # {"model_accuracy": 0.98, "citation_coverage": 1.0}# RAG contextrag_index_path: str# Metadatacreated_at: strupdated_at: strversion: int
+4.2 Task Dependencies
+Tasks execute in order based on dependencies field:
+data_ingestion: No dependencies (runs first)
+model_build: Depends on data_ingestion
+valuation_comps: Depends on data_ingestion
+dd_risks: Depends on data_ingestion
+report_generation: Depends on model_build, valuation_comps, dd_risks
+compliance_review: Depends on report_generation, model_build
+deck_assembly: Depends on report_generation, valuation_comps
+Supervisor enforces: task cannot move to running until all dependencies are done.
+5. MCP Tool Specifications
+5.1 Excel Modeling Tools
+Tool: excel_model_populate
+Description: Load Excel template, populate input cells with data, preserve formulas, add comments.
+Input Schema:{"template_id": "3statement_dcf","ticker": "MSFT","financial_data": {...},"assumptions": {"revenue_growth": 0.098,"ebitda_margin": 0.42,"wacc": 0.095,"terminal_growth": 0.025},"add_comments": true,"rag_citations": [...]}
+Output Schema:{"model_path": "MSFT_3statement_dcf_v1.xlsx","summary": {...},"checks": {...},"issues": [...]}
+Implementation:
+Uses openpyxl to load template
+Maps data to named ranges or cell addresses
+Writes cell comments with RAG links
+Runs validation checks
+Saves new file with timestamp version
+Tool: excel_export_tables
+Description: Export specific ranges from Excel to CSV/JSON for downstream use.
+Input Schema:{"model_path": "MSFT_3statement_dcf_v1.xlsx","exports": [{"sheet": "Summary", "range": "A1:F20", "format": "csv", "output": "summary_pl.csv"},{"sheet": "DCF", "range": "ValuationSummary", "format": "json", "output": "dcf_summary.json"}]}
+Tool: excel_export_charts
+Description: Export embedded charts as PNG images.
+Input Schema:{"model_path": "MSFT_3statement_dcf_v1.xlsx","charts": [{"sheet": "Charts", "chart_name": "Revenue_Waterfall", "output": "revenue_waterfall.png"},{"sheet": "Valuation", "chart_name": "Sensitivity", "output": "sensitivity_2way.png"}]}
+5.2 Data Ingestion Tools
+Tool: fetch_financial_statements
+Description: Retrieve historical financial statements from SEC EDGAR XBRL API.
+Input Schema:{"ticker": "MSFT","statements": ["income", "balance", "cashflow"],"periods": 5,"frequency": "annual"}
+Output Schema:{"ticker": "MSFT","currency": "USD","fiscal_years": [2020, 2021, 2022, 2023, 2024],"income_statement": [...],"balance_sheet": [...],"cash_flow": [...]}
+Tool: build_rag_index
+Description: Parse documents, embed, store in LanceDB.
+Input Schema:{"ticker": "MSFT","sources": [{"type": "filing", "url": "https://sec.gov/..."},{"type": "transcript", "url": "https://seekingalpha.com/..."},{"type": "file", "path": "mgmt_presentation.pdf"}],"embedding_model": "text-embedding-3-large","chunk_size": 768,"chunk_overlap": 128}
+Output Schema:{"index_path": "lancedb://ofas/msft_2024","chunk_count": 1247,"metadata": {...}}
+Tool: rag_query
+Description: Semantic search over RAG index, return top-k chunks with metadata.
+Input Schema:{"index_path": "lancedb://ofas/msft_2024","query": "What are the company's revenue growth drivers?","top_k": 5,"filters": {"source_type": "filing", "fiscal_year": 2024}}
+Output Schema:{"results": [{"chunk_id": "msft_2024_chunk_847","text": "Our cloud revenue grew 28% year-over-year...","source": "10-K 2024, MD&A, page 35","score": 0.87},...]}
+5.3 Valuation Tools
+Tool: fetch_comparable_companies
+Description: Identify peers and fetch valuation multiples.
+Input Schema:{"ticker": "MSFT","sector": "Technology","criteria": {"market_cap_min": 50_000,"market_cap_max": 5_000_000,"geography": ["US", "Global"],"exclude": ["AAPL"]}}
+Output Schema:{"peers": [{"ticker": "GOOGL","name": "Alphabet Inc.","market_cap": 1_800_000,"ev": 1_750_000,"revenue": 280_000,"ebitda": 95_000,"ev_revenue": 6.25,"ev_ebitda": 18.4,"pe": 25.3},...],"statistics": {"ev_ebitda_median": 14.2,"ev_ebitda_p25": 11.5,"ev_ebitda_p75": 18.3}}
+Tool: generate_football_field
+Description: Populate football field template and export chart.
+Input Schema:{"methods": [{"name": "Trading Comps", "low": 2_200, "mid": 2_500, "high": 2_800},{"name": "Transaction Comps", "low": 2_400, "mid": 2_650, "high": 2_900},{"name": "DCF", "low": 2_300, "mid": 2_500, "high": 2_700}],"current_value": 3_120,"output_path": "MSFT_football_field.png"}
+5.4 Reporting Tools
+Tool: generate_ic_memo
+Description: Generate structured IC memo from templates and data.
+Input Schema:{"ticker": "MSFT","template": "ic_memo_standard","inputs": {"model_summary": {...},"comps_summary": {...},"risk_summary": {...},"rag_index_path": "lancedb://ofas/msft_2024"},"style": "formal","citation_format": "APA7"}
+Output Schema:{"memo_path": "MSFT_IC_Memo_v1.docx","pdf_path": "MSFT_IC_Memo_v1.pdf","word_count": 4250,"citation_count": 28,"sections": ["Executive Summary", "Business Overview", ...]}
+Tool: generate_deck
+Description: Assemble PowerPoint deck from templates, charts, and text.
+Input Schema:{"ticker": "MSFT","template": "ic_deck_standard","slides": [{"type": "title", "content": {...}},{"type": "text", "title": "Executive Summary", "bullets": [...]},{"type": "chart", "title": "Historical Performance", "image": "revenue_chart.png"},...]}
+5.5 Compliance Tools
+Tool: validate_excel_model
+Description: Run automated checks on Excel model.
+Input Schema:{"model_path": "MSFT_3statement_dcf_v1.xlsx","checks": ["balance_sheet", "cash_ties", "formulas", "circular_refs"]}
+Output Schema:{"checks": {"balance_sheet_balanced": true,"cash_reconciles": true,"formulas_intact": true,"circular_references": false},"issues": []}
+Tool: validate_citations
+Description: Check citation coverage and consistency.
+Input Schema:{"document_path": "MSFT_IC_Memo_v1.docx","rag_index_path": "lancedb://ofas/msft_2024"}
+Output Schema:{"citation_coverage": 1.0,"orphaned_citations": [],"missing_references": [],"issues": []}
+6. Implementation Roadmap
+Phase 1: Core Infrastructure (Weeks 1–4)
+Set up LangGraph StateGraph with Supervisor + 2 agents (Data, Architect)
+Implement DealState schema and basic task management
+Build MCP tools: fetch_financial_statements, excel_model_populate
+Test: Ingest MSFT data → populate 3-statement template → validate balance sheet
+Phase 2: Valuation & Analysis (Weeks 5–7)
+Add Valuation Specialist agent
+Implement MCP tools: fetch_comparable_companies, generate_football_field
+Build DCF and sensitivity analysis workflows
+Test: Full valuation flow (DCF + comps) for sample ticker
+Phase 3: RAG & DD (Weeks 8–10)
+Integrate LanceDB for RAG indexing
+Build build_rag_index and rag_query tools
+Add M&A / DD agent for risk extraction
+Test: Parse 10-K, extract risks, link to financial impact
+Phase 4: Reporting & Compliance (Weeks 11–13)
+Add Reporting agent with IC memo generation
+Add Editor agent for deck assembly
+Add Compliance agent with validation rules
+Implement citation system (inline + References section)
+Test: End-to-end from ticker to client-ready memo + deck
+Phase 5: Optimization & Scale (Weeks 14–16)
+Performance tuning: parallel agent execution where possible
+Add human-in-the-loop checkpoints (optional review gates)
+Build monitoring dashboard: task status, quality metrics, error logs
+Load testing: run 10 deals simultaneously
+Production deployment with API endpoints
+7. Quality Assurance
+7.1 Testing Strategy
+Test Type
+Scope
+Success Criteria
+Unit Tests
+Individual MCP tools
+100% pass rate
+Agent Tests
+Each agent in isolation
+Outputs match spec
+Integration Tests
+Full workflow (ticker → deliverables)
+< 5% error rate
+Validation Tests
+Model accuracy vs. human baseline
+> 95% match
+Regression Tests
+Re-run after code changes
+No degradation
+Table 5: QA Testing Matrix
+7.2 Validation Against Human Baseline
+For initial calibration, run OFAS on 10 historical deals where human analysts have completed models and memos:
+Compare financial projections (revenue, margins, cash flow)
+Compare valuation outputs (DCF value, WACC, terminal value)
+Compare qualitative analysis (thesis, risks)
+Measure time saved vs. human effort
+Target: >95% numerical accuracy, >90% qualitative alignment, 80–90% time reduction.
+7.3 Continuous Monitoring
+Production metrics tracked in real-time:
+Throughput: Deals completed per day
+Success rate: % reaching ready_for_client without errors
+Cycle time: Hours from start to finish
+Revision cycles: Average iterations before approval
+Issue breakdown: Frequency by type (balance sheet, citation, etc.)
+8. User Interface & Interaction
+8.1 Input Methods
+Option A: CLIofas run --ticker MSFT --objective "Evaluate acquisition" --max-price 500000
+Option B: Web Dashboard
+Form: Ticker, deal type, constraints
+Upload: Additional documents (management deck, internal memo)
+Start button → Monitor progress in real-time
+Option C: APIimport requests
+response = requests.post("https://ofas.api/deals", json={"ticker": "MSFT","objective": "Evaluate acquisition for PE fund","constraints": ["Max equity 500M", "Min IRR 20%"],"template_preference": "pe_lbo"})
+deal_id = response.json()["deal_id"]
+8.2 Progress Monitoring
+Dashboard shows:
+Current mission status
+Task list with status indicators (pending/running/done/blocked)
+Issues log with severity
+Estimated time to completion
+Preview of artifacts as they generate
+8.3 Human-in-the-Loop
+Optional review gates:
+After Excel model generation: Review assumptions before proceeding
+After report draft: Edit text, adjust tone
+Before finalization: Approve or request revisions
+Implementation: When task status = needs_review, system pauses and notifies user.
+9. Extensibility & Future Enhancements
+9.1 Additional Agents
+Market Research Agent: Industry trends, competitive landscape analysis
+Operational DD Agent: Deep-dive on operations, supply chain, technology stack
+Legal Agent: Extract contract terms, IP, litigation from legal docs
+Integration Planning Agent: For M&A deals, build 100-day plan
+9.2 Advanced Features
+Multi-scenario modeling: Bear/base/bull cases with probability weighting
+Monte Carlo simulation: Integrate IQRM_MonteCarlo_Template_Full.xlsx for risk quantification[19]
+Live data feeds: Real-time pricing, news alerts during deal execution
+Collaborative editing: Multiple users (analysts, partners) review and annotate outputs
+Version control: Git-style tracking of model/memo changes with diffs
+9.3 Vertical Specialization
+PE/LBO module: Add Cap-Table-and-Exit-Waterfall-Tool, returns modeling[20]
+SaaS module: Use Enterprise-SaaS-Forecasting-Tool, cohort analysis[21]
+Ecommerce module: Ecommerce-Forecasting-Tool, customer acquisition modeling[22]
+Token/Crypto: Modeling-token-allocations-and-distributions for Web3 deals[23]
+10. Security & Compliance
+10.1 Data Handling
+Confidentiality: All deal data encrypted at rest and in transit (AES-256, TLS 1.3)
+Access control: Role-based permissions (analyst, partner, admin)
+Audit trail: Every action logged with timestamp, user, and artifact version
+10.2 Regulatory Compliance
+Disclaimers: Auto-insert forward-looking statement disclaimers, risk warnings
+Source attribution: Every data point traceable to source (no fabrication)
+Model governance: Version control, assumption documentation, audit trail
+10.3 Ethical AI Use
+No hallucination tolerance: All facts must link to RAG sources or API data
+Transparency: Users see which agent generated which content
+Human oversight: Critical decisions (proceed/pass recommendation) flagged for partner review
+11. Success Criteria & KPIs
+11.1 Technical Metrics
+Metric
+Target
+Current Baseline (Human)
+Time to deliverable
+< 4 hours
+80–120 hours
+Model accuracy
+> 95%
+100% (benchmark)
+Citation coverage
+100%
+Variable (60–90%)
+Balance sheet errors
+< 1%
+< 1%
+Revision cycles
+< 2
+3–5
+Table 6: Technical Success Metrics
+11.2 Business Metrics
+Cost savings: 90% reduction in analyst hours
+Deal throughput: 5x increase (from 2–3 to 10–15 deals per analyst per quarter)
+Quality: Client satisfaction score >4.5/5 on deliverables
+Adoption: 80% of deals use OFAS within 6 months of launch
+11.3 MVP Success (Phase 4 completion)
+System completes 10 test deals end-to-end
+90% accuracy vs. human-generated models
+All deliverables (model, memo, deck) meet quality standards
+<5% error rate requiring human intervention
+12. Dependencies & Risks
+12.1 Technical Dependencies
+LLM APIs: Relies on GPT-4, Claude, Gemini availability and pricing
+Data sources: SEC EDGAR, Yahoo Finance, FRED uptime
+LanceDB: Vector database performance at scale
+Excel engine: openpyxl / xlsxwriter formula handling
+12.2 Project Risks
+Risk
+Impact
+Probability
+Mitigation
+LLM hallucination
+High
+Medium
+Strict RAG grounding + validation
+Excel formula corruption
+High
+Low
+Never overwrite formulas + unit tests
+Data source downtime
+Medium
+Low
+Fallback APIs, cached data
+Scope creep
+Medium
+High
+Strict phase gates, defer enhancements
+Performance bottlenecks
+Medium
+Medium
+Parallel execution, optimize tools
+User adoption resistance
+High
+Medium
+Pilot with champions, training
+Table 7: Risk Register
+13. Appendices
+Appendix A: Reference Projects
+ExcelWorkerLLMToolCallAgent[24]: LangGraph + Excel tool calling patterns
+AWS Financial Analysis Multi-Agent[25]: Multi-agent orchestration for finance
+Hermes (HN Show HN)[26]: End-to-end equity research with Excel + RAG
+CarlosFinEngg/equity-research-agent[27]: Equity research report generation
+Appendix B: Template File Inventory
+Attached Excel templates (22 files):
+1_income_statement_model_1_0.xlsx
+9_fcfe_model_0_0.xlsx
+4_debt_schedule_model_0_0.xlsx
+11_sensitivity_analysis_model_0_0.xlsx
+6_dcf_model_1_0.xlsx
+13_three_statement_model_0_0.xlsx
+101-01-90-Minute-Case-Study-Otis-Complete.xlsx
+10-financial-planning-templates.xlsx
+181_Excel_Three-statement-model-1.xlsx
+101-01-Otis-10-K-Fixed.xlsx
+Accretion-Dilution-Model.xlsx
+CFI-Case-Study-Three-Statement-Model.xlsx
+CFI-Equity-Template.xlsx
+Cap-Table-and-Exit-Waterfall-Tool-by-Foresight.xlsx
+Ecommerce-Forecasting-Tool-by-Foresight.xlsx
+Enterprise-SaaS-Forecasting-Tool-by-Foresight.xlsx
+Football-field-template.xlsx
+fundraising-models-seed-to-exit.xlsx
+Fund-of-Funds-Model-by-Foresight.xlsx
+gyxypyur-DCF-Template.xlsx
+Modeling-token-allocations-and-distributions-by-Foresight.xlsx
+IQRM_MonteCarlo_Template_Full.xlsx
+Appendix C: Sample RACI Matrix
+Task
+SUP
+LIB
+ARC
+VAL
+MNA
+RPT
+CMP
+Define mission
+A
+I
+I
+I
+I
+I
+I
+Data ingestion
+A
+R
+C
+I
+C
+I
+I
+Build 3-statement
+A
+I
+R
+C
+I
+I
+C
+DCF valuation
+A
+I
+R
+C
+I
+I
+C
+Comps analysis
+A
+I
+C
+R
+I
+I
+I
+Risk DD
+A
+C
+I
+I
+R
+C
+C
+IC memo
+A
+I
+C
+C
+C
+R
+C
+Compliance checks
+A
+I
+C
+C
+C
+C
+R
+Final approval
+A
+I
+I
+I
+I
+I
+I
+Table 8: RACI Matrix (SUP=Supervisor, LIB=Librarian, ARC=Architect, VAL=Valuation, MNA=M&A, RPT=Reporting, CMP=Compliance)
+Appendix D: Glossary
+DCF: Discounted Cash Flow valuation
+FCFE: Free Cash Flow to Equity
+IC: Investment Committee
+RAG: Retrieval-Augmented Generation
+RACI: Responsible, Accountable, Consulted, Informed
+WACC: Weighted Average Cost of Capital
+LBO: Leveraged Buyout
+EV/EBITDA: Enterprise Value to EBITDA multiple
+DD: Due Diligence
+MCP: Model Context Protocol
+References
+[1] Hermes Multi-Agent Framework. (2026, February 25). Show HN: Framework for building multi-agent equity research agents. Hacker News. https://news.ycombinator.com/item?id=47156540
+[2] LangChain. (2026, March 2). Build a custom RAG agent with LangGraph. LangChain Documentation. https://docs.langchain.com/oss/python/langgraph/agentic-rag
+[3] AWS. (2025, April 13). Build multi-agent systems with LangGraph and Amazon Bedrock. AWS Machine Learning Blog. https://aws.amazon.com/blogs/machine-learning/build-multi-agent-systems-with-langgraph-and-amazon-bedrock/
+[4] LangGraph. (2025, April 13). Multi-Agent Systems - Overview. LangGraph Documentation. https://langchain-ai.github.io/langgraph/concepts/multi_agent/
+[5] LangChain. (2026, March 2). Workflows and agents. LangChain Documentation. https://docs.langchain.com/oss/python/langgraph/workflows-agents
+[6] Project Management Institute. (2023). RACI matrix for team delegation. PMBOK Guide (7th ed.).
+[7] U.S. Securities and Exchange Commission. (2024). EDGAR Company Filings API Documentation. https://www.sec.gov/edgar/searchedgar/accessing-edgar-data.htm
+[8] LangChain. (2023, December 18). Microsoft Excel integration. LangChain Documentation. https://docs.langchain.com/oss/python/integrations/document_loaders/microsoft_excel
+[9] Elastic. (2025, November 17). How to build a multi-agent system using Elasticsearch and LangGraph. Elastic Search Labs Blog. https://www.elastic.co/search-labs/blog/multi-agent-system-llm-agents-elasticsearch-langgraph
+[10] Corporate Finance Institute. (2024). Three-Statement Financial Model Template. CFI Excel Templates.
+[11] Breaking Into Wall Street. (2024). DCF Valuation Model Template. BIWS Financial Modeling.
+[12] Foresight Valuation. (2024). Enterprise SaaS Forecasting Tool. Foresight Templates.
+[13] OpenPyXL Development Team. (2024). openpyxl Documentation. https://openpyxl.readthedocs.io/
+[14] Wall Street Prep. (2024). Football Field Valuation Chart Template. WSP Templates.
+[15] Macabacus. (2024). Sensitivity Analysis Model Template. Macabacus Excel Add-in.
+[16] Guru Startups. (2025, October 29). LLMs in Finance: Automating Equity Research. Guru Startups Reports. https://www.gurustartups.com/reports/llms-in-finance-automating-equity-research
+[17] Marvin Labs. (2025, October 31). AI Technologies for Equity Research: LLMs, Agents & NLP Explained. Marvin Labs Blog. https://www.marvin-labs.com/blog/ai-technologies-equity-research-llms-agents-nlp/
+[18] McKinsey & Company. (2023). Investment Committee presentation best practices. Private Equity Insights.
+[19] IQRM. (2024). Monte Carlo Simulation Template for Financial Risk Analysis. IQRM Templates.
+[20] Foresight Valuation. (2024). Cap Table and Exit Waterfall Tool. Foresight Templates.
+[21] Foresight Valuation. (2024). Enterprise SaaS Forecasting Tool. Foresight Templates.
+[22] Foresight Valuation. (2024). Ecommerce Forecasting Tool. Foresight Templates.
+[23] Foresight Valuation. (2024). Modeling Token Allocations and Distributions. Foresight Templates.
+[24] jenyss. (2025, January 23). ExcelWorkerLLMToolCallAgent. GitHub Repository. https://github.com/jenyss/ExcelWorkerLLMToolCallAgent
+[25] AWS Samples. (2024, December 16). financial-analysis-multi-agent-collaboration. GitHub Repository. https://github.com/aws-samples/financial-analysis-multi-agent-collaboration
+[26] Hermes Framework. (2026, February 25). Multi-agent equity research framework. Hacker News Discussion. https://news.ycombinator.com/item?id=47156540
+[27] CarlosFinEngg. (2025, May 29). equity-research-agent. GitHub Repository. https://github.com/CarlosFinEngg/equity-research-agent

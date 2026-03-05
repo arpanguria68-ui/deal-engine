@@ -1,0 +1,678 @@
+/app/app/core/llm/gemini_client.py:3: FutureWarning: 
+
+All support for the `google.generativeai` package has ended. It will no longer be receiving 
+updates or bug fixes. Please switch to the `google.genai` package as soon as possible.
+See README for more details:
+
+https://github.com/google-gemini/deprecated-generative-ai-python/blob/main/README.md
+
+  import google.generativeai as genai
+INFO:     Started server process [1]
+INFO:     Waiting for application startup.
+INFO:     Application startup complete.
+INFO:     Uvicorn running on http://0.0.0.0:8000 (Press CTRL+C to quit)
+INFO:     127.0.0.1:57796 - "GET /health HTTP/1.1" 200 OK
+INFO:     172.22.0.1:40048 - "GET /api/v1/dashboard/metrics HTTP/1.1" 200 OK
+INFO:     172.22.0.1:36406 - "GET /api/v1/dashboard/metrics HTTP/1.1" 200 OK
+INFO:     172.22.0.1:48576 - "GET /api/v1/dashboard/metrics HTTP/1.1" 200 OK
+INFO:     127.0.0.1:45990 - "GET /health HTTP/1.1" 200 OK
+INFO:     172.22.0.1:56228 - "GET /api/v1/dashboard/metrics HTTP/1.1" 200 OK
+INFO:     172.22.0.1:56238 - "GET /api/v1/dashboard/metrics HTTP/1.1" 200 OK
+INFO:     127.0.0.1:39768 - "GET /health HTTP/1.1" 200 OK
+INFO:     172.22.0.1:33866 - "GET /api/v1/dashboard/metrics HTTP/1.1" 200 OK
+INFO:     172.22.0.1:36216 - "GET /api/v1/dashboard/metrics HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50748 - "GET /health HTTP/1.1" 200 OK
+INFO:     172.22.0.1:53830 - "GET /api/v1/dashboard/metrics HTTP/1.1" 200 OK
+INFO:     172.22.0.1:53836 - "GET /api/v1/dashboard/metrics HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54696 - "GET /health HTTP/1.1" 200 OK
+INFO:     172.22.0.1:52280 - "GET /api/v1/dashboard/metrics HTTP/1.1" 200 OK
+INFO:     172.22.0.1:40296 - "GET /api/v1/dashboard/metrics HTTP/1.1" 200 OK
+INFO:     127.0.0.1:46092 - "GET /health HTTP/1.1" 200 OK
+INFO:     172.22.0.1:38340 - "GET /api/v1/dashboard/metrics HTTP/1.1" 200 OK
+INFO:     172.22.0.1:38346 - "GET /api/v1/dashboard/metrics HTTP/1.1" 200 OK
+INFO:     127.0.0.1:38250 - "GET /health HTTP/1.1" 200 OK
+INFO:     172.22.0.1:49596 - "GET /api/v1/dashboard/metrics HTTP/1.1" 200 OK
+INFO:     172.22.0.1:42074 - "GET /api/v1/dashboard/metrics HTTP/1.1" 200 OK
+INFO:     127.0.0.1:34800 - "GET /health HTTP/1.1" 200 OK
+INFO:     172.22.0.1:34696 - "GET /api/v1/dashboard/metrics HTTP/1.1" 200 OK
+INFO:     172.22.0.1:34700 - "GET /api/v1/dashboard/metrics HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55562 - "GET /health HTTP/1.1" 200 OK
+INFO:     172.22.0.1:55310 - "GET /api/v1/dashboard/metrics HTTP/1.1" 200 OK
+INFO:     172.22.0.1:51774 - "GET /api/v1/dashboard/metrics HTTP/1.1" 200 OK
+INFO:     127.0.0.1:45934 - "GET /health HTTP/1.1" 200 OK
+INFO:     172.22.0.1:37586 - "GET /api/v1/dashboard/metrics HTTP/1.1" 200 OK
+INFO:     172.22.0.1:37600 - "GET /api/v1/dashboard/metrics HTTP/1.1" 200 OK
+INFO:     127.0.0.1:45154 - "GET /health HTTP/1.1" 200 OK
+INFO:     172.22.0.1:59270 - "GET /api/v1/dashboard/metrics HTTP/1.1" 200 OK
+INFO:     172.22.0.1:45552 - "GET /api/v1/dashboard/metrics HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50840 - "GET /health HTTP/1.1" 200 OK
+INFO:     172.22.0.1:43178 - "GET /api/v1/dashboard/metrics HTTP/1.1" 200 OK
+INFO:     172.22.0.1:43184 - "GET /api/v1/dashboard/metrics HTTP/1.1" 200 OK
+INFO:     127.0.0.1:40842 - "GET /health HTTP/1.1" 200 OK
+INFO:     172.22.0.1:49048 - "GET /api/v1/dashboard/metrics HTTP/1.1" 200 OK
+INFO:     172.22.0.1:41630 - "GET /api/v1/dashboard/metrics HTTP/1.1" 200 OK
+INFO:     127.0.0.1:59524 - "GET /health HTTP/1.1" 200 OK
+INFO:     172.22.0.1:50804 - "GET /api/v1/dashboard/metrics HTTP/1.1" 200 OK
+INFO:     172.22.0.1:50814 - "GET /api/v1/dashboard/metrics HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56878 - "GET /health HTTP/1.1" 200 OK
+INFO:     172.22.0.1:38762 - "GET /api/v1/dashboard/metrics HTTP/1.1" 200 OK
+INFO:     172.22.0.1:48958 - "GET /api/v1/dashboard/metrics HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58692 - "GET /health HTTP/1.1" 200 OK
+INFO:     172.22.0.1:57088 - "GET /api/v1/dashboard/metrics HTTP/1.1" 200 OK
+INFO:     172.22.0.1:57104 - "GET /api/v1/dashboard/metrics HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50462 - "GET /health HTTP/1.1" 200 OK
+INFO:     172.22.0.1:42262 - "GET /api/v1/dashboard/metrics HTTP/1.1" 200 OK
+INFO:     172.22.0.1:37142 - "GET /api/v1/dashboard/metrics HTTP/1.1" 200 OK
+INFO:     127.0.0.1:52420 - "GET /health HTTP/1.1" 200 OK
+INFO:     172.22.0.1:40452 - "GET /api/v1/dashboard/metrics HTTP/1.1" 200 OK
+INFO:     172.22.0.1:40454 - "GET /api/v1/dashboard/metrics HTTP/1.1" 200 OK
+INFO:     127.0.0.1:35312 - "GET /health HTTP/1.1" 200 OK
+INFO:     172.22.0.1:35772 - "GET /api/v1/dashboard/metrics HTTP/1.1" 200 OK
+INFO:     172.22.0.1:54638 - "GET /api/v1/dashboard/metrics HTTP/1.1" 200 OK
+INFO:     127.0.0.1:45182 - "GET /health HTTP/1.1" 200 OK
+INFO:     172.22.0.1:33628 - "GET /api/v1/dashboard/metrics HTTP/1.1" 200 OK
+INFO:     172.22.0.1:33634 - "GET /api/v1/dashboard/metrics HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54676 - "GET /health HTTP/1.1" 200 OK
+INFO:     172.22.0.1:57792 - "GET /api/v1/dashboard/metrics HTTP/1.1" 200 OK
+INFO:     172.22.0.1:50070 - "GET /api/v1/dashboard/metrics HTTP/1.1" 200 OK
+INFO:     127.0.0.1:60608 - "GET /health HTTP/1.1" 200 OK
+INFO:     172.22.0.1:42582 - "GET /api/v1/dashboard/metrics HTTP/1.1" 200 OK
+INFO:     172.22.0.1:42586 - "GET /api/v1/dashboard/metrics HTTP/1.1" 200 OK
+INFO:     127.0.0.1:53410 - "GET /health HTTP/1.1" 200 OK
+INFO:     172.22.0.1:49258 - "GET /api/v1/dashboard/metrics HTTP/1.1" 200 OK
+INFO:     172.22.0.1:38018 - "GET /api/v1/dashboard/metrics HTTP/1.1" 200 OK
+INFO:     127.0.0.1:37678 - "GET /health HTTP/1.1" 200 OK
+INFO:     172.22.0.1:43130 - "GET /api/v1/dashboard/metrics HTTP/1.1" 200 OK
+INFO:     172.22.0.1:43142 - "GET /api/v1/dashboard/metrics HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54824 - "GET /health HTTP/1.1" 200 OK
+INFO:     172.22.0.1:55974 - "GET /api/v1/dashboard/metrics HTTP/1.1" 200 OK
+INFO:     172.22.0.1:56900 - "GET /api/v1/dashboard/metrics HTTP/1.1" 200 OK
+INFO:     127.0.0.1:39424 - "GET /health HTTP/1.1" 200 OK
+INFO:     172.22.0.1:35894 - "GET /api/v1/dashboard/metrics HTTP/1.1" 200 OK
+INFO:     172.22.0.1:35906 - "GET /api/v1/dashboard/metrics HTTP/1.1" 200 OK
+INFO:     127.0.0.1:47662 - "GET /health HTTP/1.1" 200 OK
+INFO:     172.22.0.1:60164 - "GET /api/v1/dashboard/metrics HTTP/1.1" 200 OK
+INFO:     172.22.0.1:33940 - "GET /api/v1/dashboard/metrics HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57720 - "GET /health HTTP/1.1" 200 OK
+INFO:     172.22.0.1:57896 - "GET /api/v1/dashboard/metrics HTTP/1.1" 200 OK
+INFO:     172.22.0.1:57908 - "GET /api/v1/dashboard/metrics HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54012 - "GET /health HTTP/1.1" 200 OK
+INFO:     172.22.0.1:58910 - "GET /api/v1/dashboard/metrics HTTP/1.1" 200 OK
+INFO:     172.22.0.1:57286 - "GET /api/v1/dashboard/metrics HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50342 - "GET /health HTTP/1.1" 200 OK
+INFO:     172.22.0.1:45568 - "GET /api/v1/dashboard/metrics HTTP/1.1" 200 OK
+INFO:     172.22.0.1:45570 - "GET /api/v1/dashboard/metrics HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49486 - "GET /health HTTP/1.1" 200 OK
+INFO:     172.22.0.1:58076 - "GET /api/v1/dashboard/metrics HTTP/1.1" 200 OK
+INFO:     172.22.0.1:33298 - "GET /api/v1/dashboard/metrics HTTP/1.1" 200 OK
+INFO:     127.0.0.1:45952 - "GET /health HTTP/1.1" 200 OK
+INFO:     172.22.0.1:48006 - "GET /api/v1/dashboard/metrics HTTP/1.1" 200 OK
+INFO:     172.22.0.1:48010 - "GET /api/v1/dashboard/metrics HTTP/1.1" 200 OK
+INFO:     127.0.0.1:41916 - "GET /health HTTP/1.1" 200 OK
+INFO:     172.22.0.1:52764 - "GET /api/v1/dashboard/metrics HTTP/1.1" 200 OK
+INFO:     172.22.0.1:44384 - "GET /api/v1/dashboard/metrics HTTP/1.1" 200 OK
+INFO:     127.0.0.1:60240 - "GET /health HTTP/1.1" 200 OK
+INFO:     172.22.0.1:40050 - "GET /api/v1/dashboard/metrics HTTP/1.1" 200 OK
+INFO:     172.22.0.1:40060 - "GET /api/v1/dashboard/metrics HTTP/1.1" 200 OK
+INFO:     127.0.0.1:52318 - "GET /health HTTP/1.1" 200 OK
+INFO:     172.22.0.1:44132 - "GET /api/v1/dashboard/metrics HTTP/1.1" 200 OK
+INFO:     172.22.0.1:50072 - "GET /api/v1/dashboard/metrics HTTP/1.1" 200 OK
+INFO:     127.0.0.1:51578 - "GET /health HTTP/1.1" 200 OK
+INFO:     172.22.0.1:33154 - "GET /api/v1/dashboard/metrics HTTP/1.1" 200 OK
+INFO:     172.22.0.1:33164 - "GET /api/v1/dashboard/metrics HTTP/1.1" 200 OK
+INFO:     127.0.0.1:35398 - "GET /health HTTP/1.1" 200 OK
+INFO:     172.22.0.1:53598 - "GET /api/v1/dashboard/metrics HTTP/1.1" 200 OK
+INFO:     172.22.0.1:50382 - "GET /api/v1/dashboard/metrics HTTP/1.1" 200 OK
+INFO:     127.0.0.1:37414 - "GET /health HTTP/1.1" 200 OK
+INFO:     172.22.0.1:52372 - "GET /api/v1/dashboard/metrics HTTP/1.1" 200 OK
+INFO:     172.22.0.1:52382 - "GET /api/v1/dashboard/metrics HTTP/1.1" 200 OK
+INFO:     127.0.0.1:45372 - "GET /health HTTP/1.1" 200 OK
+INFO:     172.22.0.1:47670 - "GET /api/v1/dashboard/metrics HTTP/1.1" 200 OK
+INFO:     172.22.0.1:44002 - "GET /api/v1/dashboard/metrics HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50018 - "GET /health HTTP/1.1" 200 OK
+INFO:     172.22.0.1:34068 - "GET /api/v1/dashboard/metrics HTTP/1.1" 200 OK
+INFO:     172.22.0.1:34072 - "GET /api/v1/dashboard/metrics HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49964 - "GET /health HTTP/1.1" 200 OK
+INFO:     172.22.0.1:52626 - "GET /api/v1/dashboard/metrics HTTP/1.1" 200 OK
+INFO:     172.22.0.1:54334 - "GET /api/v1/dashboard/metrics HTTP/1.1" 200 OK
+INFO:     127.0.0.1:47554 - "GET /health HTTP/1.1" 200 OK
+INFO:     172.22.0.1:33250 - "GET /api/v1/dashboard/metrics HTTP/1.1" 200 OK
+INFO:     172.22.0.1:33254 - "GET /api/v1/dashboard/metrics HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50068 - "GET /health HTTP/1.1" 200 OK
+INFO:     172.22.0.1:37396 - "GET /api/v1/dashboard/metrics HTTP/1.1" 200 OK
+INFO:     172.22.0.1:53210 - "GET /api/v1/dashboard/metrics HTTP/1.1" 200 OK
+INFO:     127.0.0.1:43692 - "GET /health HTTP/1.1" 200 OK
+INFO:     172.22.0.1:48336 - "GET /api/v1/dashboard/metrics HTTP/1.1" 200 OK
+INFO:     172.22.0.1:48340 - "GET /api/v1/dashboard/metrics HTTP/1.1" 200 OK
+INFO:     127.0.0.1:45952 - "GET /health HTTP/1.1" 200 OK
+INFO:     172.22.0.1:43244 - "GET /api/v1/dashboard/metrics HTTP/1.1" 200 OK
+INFO:     172.22.0.1:41858 - "GET /api/v1/dashboard/metrics HTTP/1.1" 200 OK
+INFO:     127.0.0.1:59872 - "GET /health HTTP/1.1" 200 OK
+INFO:     172.22.0.1:53428 - "GET /api/v1/dashboard/metrics HTTP/1.1" 200 OK
+INFO:     172.22.0.1:53436 - "GET /api/v1/dashboard/metrics HTTP/1.1" 200 OK
+INFO:     127.0.0.1:41336 - "GET /health HTTP/1.1" 200 OK
+INFO:     172.22.0.1:42334 - "GET /api/v1/dashboard/metrics HTTP/1.1" 200 OK
+INFO:     172.22.0.1:45868 - "GET /api/v1/dashboard/metrics HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54464 - "GET /health HTTP/1.1" 200 OK
+INFO:     172.22.0.1:56206 - "GET /api/v1/dashboard/metrics HTTP/1.1" 200 OK
+INFO:     172.22.0.1:56208 - "GET /api/v1/dashboard/metrics HTTP/1.1" 200 OK
+INFO:     127.0.0.1:37478 - "GET /health HTTP/1.1" 200 OK
+INFO:     172.22.0.1:47766 - "GET /api/v1/dashboard/metrics HTTP/1.1" 200 OK
+INFO:     172.22.0.1:40168 - "GET /api/v1/dashboard/metrics HTTP/1.1" 200 OK
+INFO:     127.0.0.1:39072 - "GET /health HTTP/1.1" 200 OK
+INFO:     172.22.0.1:39878 - "GET /api/v1/dashboard/metrics HTTP/1.1" 200 OK
+INFO:     172.22.0.1:39892 - "GET /api/v1/dashboard/metrics HTTP/1.1" 200 OK
+INFO:     127.0.0.1:32858 - "GET /health HTTP/1.1" 200 OK
+INFO:     172.22.0.1:45474 - "GET /api/v1/dashboard/metrics HTTP/1.1" 200 OK
+INFO:     172.22.0.1:38512 - "GET /api/v1/dashboard/metrics HTTP/1.1" 200 OK
+INFO:     127.0.0.1:39804 - "GET /health HTTP/1.1" 200 OK
+INFO:     172.22.0.1:35612 - "GET /api/v1/dashboard/metrics HTTP/1.1" 200 OK
+INFO:     172.22.0.1:35628 - "GET /api/v1/dashboard/metrics HTTP/1.1" 200 OK
+INFO:     127.0.0.1:53556 - "GET /health HTTP/1.1" 200 OK
+INFO:     172.22.0.1:43972 - "GET /api/v1/dashboard/metrics HTTP/1.1" 200 OK
+INFO:     172.22.0.1:33708 - "GET /api/v1/dashboard/metrics HTTP/1.1" 200 OK
+INFO:     127.0.0.1:32960 - "GET /health HTTP/1.1" 200 OK
+INFO:     172.22.0.1:39280 - "GET /api/v1/dashboard/metrics HTTP/1.1" 200 OK
+INFO:     172.22.0.1:39292 - "GET /api/v1/dashboard/metrics HTTP/1.1" 200 OK
+INFO:     127.0.0.1:35698 - "GET /health HTTP/1.1" 200 OK
+INFO:     172.22.0.1:40390 - "GET /api/v1/dashboard/metrics HTTP/1.1" 200 OK
+INFO:     172.22.0.1:56370 - "GET /api/v1/dashboard/metrics HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50004 - "GET /health HTTP/1.1" 200 OK
+INFO:     172.22.0.1:52026 - "GET /api/v1/dashboard/metrics HTTP/1.1" 200 OK
+INFO:     172.22.0.1:52034 - "GET /api/v1/dashboard/metrics HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56608 - "GET /health HTTP/1.1" 200 OK
+INFO:     172.22.0.1:45252 - "GET /api/v1/dashboard/metrics HTTP/1.1" 200 OK
+INFO:     172.22.0.1:39222 - "GET /api/v1/dashboard/metrics HTTP/1.1" 200 OK
+INFO:     127.0.0.1:48202 - "GET /health HTTP/1.1" 200 OK
+INFO:     172.22.0.1:45020 - "GET /api/v1/dashboard/metrics HTTP/1.1" 200 OK
+INFO:     172.22.0.1:45028 - "GET /api/v1/dashboard/metrics HTTP/1.1" 200 OK
+INFO:     127.0.0.1:32898 - "GET /health HTTP/1.1" 200 OK
+INFO:     172.22.0.1:49244 - "GET /api/v1/dashboard/metrics HTTP/1.1" 200 OK
+INFO:     172.22.0.1:41418 - "GET /api/v1/dashboard/metrics HTTP/1.1" 200 OK
+INFO:     127.0.0.1:39150 - "GET /health HTTP/1.1" 200 OK
+INFO:     172.22.0.1:50396 - "GET /api/v1/dashboard/metrics HTTP/1.1" 200 OK
+INFO:     172.22.0.1:50404 - "GET /api/v1/dashboard/metrics HTTP/1.1" 200 OK
+INFO:     127.0.0.1:43196 - "GET /health HTTP/1.1" 200 OK
+INFO:     172.22.0.1:44232 - "GET /api/v1/dashboard/metrics HTTP/1.1" 200 OK
+INFO:     172.22.0.1:40474 - "GET /api/v1/dashboard/metrics HTTP/1.1" 200 OK
+INFO:     127.0.0.1:39132 - "GET /health HTTP/1.1" 200 OK
+INFO:     172.22.0.1:47900 - "GET /api/v1/dashboard/metrics HTTP/1.1" 200 OK
+INFO:     172.22.0.1:47904 - "GET /api/v1/dashboard/metrics HTTP/1.1" 200 OK
+INFO:     127.0.0.1:45482 - "GET /health HTTP/1.1" 200 OK
+INFO:     172.22.0.1:39068 - "GET /api/v1/dashboard/metrics HTTP/1.1" 200 OK
+INFO:     172.22.0.1:36704 - "GET /api/v1/dashboard/metrics HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56410 - "GET /health HTTP/1.1" 200 OK
+INFO:     172.22.0.1:32822 - "GET /api/v1/dashboard/metrics HTTP/1.1" 200 OK
+INFO:     172.22.0.1:32834 - "GET /api/v1/dashboard/metrics HTTP/1.1" 200 OK
+INFO:     127.0.0.1:44244 - "GET /health HTTP/1.1" 200 OK
+INFO:     172.22.0.1:33398 - "GET /api/v1/dashboard/metrics HTTP/1.1" 200 OK
+INFO:     172.22.0.1:51976 - "GET /api/v1/dashboard/metrics HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55040 - "GET /health HTTP/1.1" 200 OK
+INFO:     172.22.0.1:56828 - "GET /api/v1/dashboard/metrics HTTP/1.1" 200 OK
+INFO:     172.22.0.1:56830 - "GET /api/v1/dashboard/metrics HTTP/1.1" 200 OK
+INFO:     127.0.0.1:52476 - "GET /health HTTP/1.1" 200 OK
+INFO:     172.22.0.1:53146 - "GET /api/v1/dashboard/metrics HTTP/1.1" 200 OK
+INFO:     172.22.0.1:43836 - "GET /api/v1/dashboard/metrics HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54362 - "GET /health HTTP/1.1" 200 OK
+INFO:     172.22.0.1:44814 - "GET /api/v1/dashboard/metrics HTTP/1.1" 200 OK
+INFO:     172.22.0.1:44820 - "GET /api/v1/dashboard/metrics HTTP/1.1" 200 OK
+INFO:     127.0.0.1:42014 - "GET /health HTTP/1.1" 200 OK
+INFO:     172.22.0.1:59772 - "GET /api/v1/dashboard/metrics HTTP/1.1" 200 OK
+INFO:     172.22.0.1:53342 - "GET /api/v1/dashboard/metrics HTTP/1.1" 200 OK
+INFO:     172.22.0.1:40826 - "GET /api/v1/dashboard/metrics HTTP/1.1" 200 OK
+INFO:     127.0.0.1:42168 - "GET /health HTTP/1.1" 200 OK
+INFO:     172.22.0.1:40830 - "GET /api/v1/dashboard/metrics HTTP/1.1" 200 OK
+INFO:     172.22.0.1:38198 - "GET /api/v1/dashboard/metrics HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56540 - "GET /health HTTP/1.1" 200 OK
+INFO:     172.22.0.1:38198 - "GET /api/v1/dashboard/metrics HTTP/1.1" 200 OK
+INFO:     172.22.0.1:38212 - "GET /api/v1/deals/all/tasks HTTP/1.1" 200 OK
+INFO:     172.22.0.1:38214 - "GET /api/v1/settings HTTP/1.1" 200 OK
+INFO:     172.22.0.1:38218 - "GET /api/v1/models/available HTTP/1.1" 200 OK
+INFO:     172.22.0.1:36366 - "GET /api/v1/dashboard/metrics HTTP/1.1" 200 OK
+INFO:     127.0.0.1:33678 - "GET /health HTTP/1.1" 200 OK
+INFO:     172.22.0.1:48636 - "GET /api/v1/dashboard/metrics HTTP/1.1" 200 OK
+INFO:     172.22.0.1:48636 - "OPTIONS /api/v1/settings HTTP/1.1" 200 OK
+INFO:     172.22.0.1:48636 - "POST /api/v1/settings HTTP/1.1" 200 OK
+INFO:     172.22.0.1:48636 - "POST /api/v1/settings HTTP/1.1" 200 OK
+INFO:     172.22.0.1:48636 - "GET /api/v1/dashboard/metrics HTTP/1.1" 200 OK
+INFO:     172.22.0.1:48640 - "GET /api/v1/dashboard/metrics HTTP/1.1" 200 OK
+INFO:     127.0.0.1:34670 - "GET /health HTTP/1.1" 200 OK
+INFO:     172.22.0.1:49896 - "GET /api/v1/dashboard/metrics HTTP/1.1" 200 OK
+INFO:     172.22.0.1:59632 - "OPTIONS /api/v1/deals HTTP/1.1" 200 OK
+INFO:     172.22.0.1:59632 - "POST /api/v1/deals HTTP/1.1" 200 OK
+INFO:     172.22.0.1:59632 - "OPTIONS /api/v1/chat/plan HTTP/1.1" 200 OK
+{"error": "429 You exceeded your current quota, please check your plan and billing details. For more information on this error, head to: https://ai.google.dev/gemini-api/docs/rate-limits. To monitor your current usage, head to: https://ai.dev/rate-limit. \n* Quota exceeded for metric: generativelanguage.googleapis.com/generate_content_free_tier_requests, limit: 20, model: gemini-3-flash\nPlease retry in 42.102159262s. [links {\n  description: \"Learn more about Gemini API quotas\"\n  url: \"https://ai.google.dev/gemini-api/docs/rate-limits\"\n}\n, violations {\n  quota_metric: \"generativelanguage.googleapis.com/generate_content_free_tier_requests\"\n  quota_id: \"GenerateRequestsPerDayPerProjectPerModel-FreeTier\"\n  quota_dimensions {\n    key: \"model\"\n    value: \"gemini-3-flash\"\n  }\n  quota_dimensions {\n    key: \"location\"\n    value: \"global\"\n  }\n  quota_value: 20\n}\n, retry_delay {\n  seconds: 42\n}\n]", "event": "Gemini generation failed", "logger": "app.core.llm.gemini_client", "level": "error", "timestamp": "2026-03-02T22:11:17.834263Z"}
+{"agent": "project_manager", "error": "429 You exceeded your current quota, please check your plan and billing details. For more information on this error, head to: https://ai.google.dev/gemini-api/docs/rate-limits. To monitor your current usage, head to: https://ai.dev/rate-limit. \n* Quota exceeded for metric: generativelanguage.googleapis.com/generate_content_free_tier_requests, limit: 20, model: gemini-3-flash\nPlease retry in 42.102159262s. [links {\n  description: \"Learn more about Gemini API quotas\"\n  url: \"https://ai.google.dev/gemini-api/docs/rate-limits\"\n}\n, violations {\n  quota_metric: \"generativelanguage.googleapis.com/generate_content_free_tier_requests\"\n  quota_id: \"GenerateRequestsPerDayPerProjectPerModel-FreeTier\"\n  quota_dimensions {\n    key: \"model\"\n    value: \"gemini-3-flash\"\n  }\n  quota_dimensions {\n    key: \"location\"\n    value: \"global\"\n  }\n  quota_value: 20\n}\n, retry_delay {\n  seconds: 42\n}\n]", "event": "llm_task_generation_failed", "logger": "app.agents.project_manager", "level": "warning", "timestamp": "2026-03-02T22:11:17.834594Z"}
+INFO:     172.22.0.1:59638 - "POST /api/v1/chat/plan HTTP/1.1" 200 OK
+INFO:     172.22.0.1:59638 - "OPTIONS /api/v1/chat/execute-task HTTP/1.1" 200 OK
+{"agent": "financial_analyst", "attempted": "ollama", "fallback": "gemini", "event": "Local LLM offline, falling back to cloud", "logger": "app.core.llm.model_router", "level": "warning", "timestamp": "2026-03-02T22:11:17.851565Z"}
+{"error": "429 You exceeded your current quota, please check your plan and billing details. For more information on this error, head to: https://ai.google.dev/gemini-api/docs/rate-limits. To monitor your current usage, head to: https://ai.dev/rate-limit. \n* Quota exceeded for metric: generativelanguage.googleapis.com/generate_content_free_tier_requests, limit: 20, model: gemini-3-flash\nPlease retry in 41.610503443s. [links {\n  description: \"Learn more about Gemini API quotas\"\n  url: \"https://ai.google.dev/gemini-api/docs/rate-limits\"\n}\n, violations {\n  quota_metric: \"generativelanguage.googleapis.com/generate_content_free_tier_requests\"\n  quota_id: \"GenerateRequestsPerDayPerProjectPerModel-FreeTier\"\n  quota_dimensions {\n    key: \"model\"\n    value: \"gemini-3-flash\"\n  }\n  quota_dimensions {\n    key: \"location\"\n    value: \"global\"\n  }\n  quota_value: 20\n}\n, retry_delay {\n  seconds: 41\n}\n]", "event": "Gemini generation failed", "logger": "app.core.llm.gemini_client", "level": "error", "timestamp": "2026-03-02T22:11:18.325576Z"}
+{"agent": "financial_analyst", "error": "429 You exceeded your current quota, please check your plan and billing details. For more information on this error, head to: https://ai.google.dev/gemini-api/docs/rate-limits. To monitor your current usage, head to: https://ai.dev/rate-limit. \n* Quota exceeded for metric: generativelanguage.googleapis.com/generate_content_free_tier_requests, limit: 20, model: gemini-3-flash\nPlease retry in 41.610503443s. [links {\n  description: \"Learn more about Gemini API quotas\"\n  url: \"https://ai.google.dev/gemini-api/docs/rate-limits\"\n}\n, violations {\n  quota_metric: \"generativelanguage.googleapis.com/generate_content_free_tier_requests\"\n  quota_id: \"GenerateRequestsPerDayPerProjectPerModel-FreeTier\"\n  quota_dimensions {\n    key: \"model\"\n    value: \"gemini-3-flash\"\n  }\n  quota_dimensions {\n    key: \"location\"\n    value: \"global\"\n  }\n  quota_value: 20\n}\n, retry_delay {\n  seconds: 41\n}\n]", "event": "task_execution_error", "logger": "app.main", "level": "error", "timestamp": "2026-03-02T22:11:18.325856Z"}
+INFO:     172.22.0.1:59632 - "POST /api/v1/chat/execute-task HTTP/1.1" 200 OK
+INFO:     172.22.0.1:59632 - "OPTIONS /api/v1/agent-activity HTTP/1.1" 200 OK
+INFO:     172.22.0.1:59632 - "POST /api/v1/agent-activity HTTP/1.1" 200 OK
+{"agent": "market_researcher", "attempted": "ollama", "fallback": "gemini", "event": "Local LLM offline, falling back to cloud", "logger": "app.core.llm.model_router", "level": "warning", "timestamp": "2026-03-02T22:11:18.342701Z"}
+{"error": "429 You exceeded your current quota, please check your plan and billing details. For more information on this error, head to: https://ai.google.dev/gemini-api/docs/rate-limits. To monitor your current usage, head to: https://ai.dev/rate-limit. \n* Quota exceeded for metric: generativelanguage.googleapis.com/generate_content_free_tier_requests, limit: 20, model: gemini-3-flash\nPlease retry in 41.286119699s. [links {\n  description: \"Learn more about Gemini API quotas\"\n  url: \"https://ai.google.dev/gemini-api/docs/rate-limits\"\n}\n, violations {\n  quota_metric: \"generativelanguage.googleapis.com/generate_content_free_tier_requests\"\n  quota_id: \"GenerateRequestsPerDayPerProjectPerModel-FreeTier\"\n  quota_dimensions {\n    key: \"model\"\n    value: \"gemini-3-flash\"\n  }\n  quota_dimensions {\n    key: \"location\"\n    value: \"global\"\n  }\n  quota_value: 20\n}\n, retry_delay {\n  seconds: 41\n}\n]", "event": "Gemini generation failed", "logger": "app.core.llm.gemini_client", "level": "error", "timestamp": "2026-03-02T22:11:18.655947Z"}
+{"agent": "market_researcher", "error": "429 You exceeded your current quota, please check your plan and billing details. For more information on this error, head to: https://ai.google.dev/gemini-api/docs/rate-limits. To monitor your current usage, head to: https://ai.dev/rate-limit. \n* Quota exceeded for metric: generativelanguage.googleapis.com/generate_content_free_tier_requests, limit: 20, model: gemini-3-flash\nPlease retry in 41.286119699s. [links {\n  description: \"Learn more about Gemini API quotas\"\n  url: \"https://ai.google.dev/gemini-api/docs/rate-limits\"\n}\n, violations {\n  quota_metric: \"generativelanguage.googleapis.com/generate_content_free_tier_requests\"\n  quota_id: \"GenerateRequestsPerDayPerProjectPerModel-FreeTier\"\n  quota_dimensions {\n    key: \"model\"\n    value: \"gemini-3-flash\"\n  }\n  quota_dimensions {\n    key: \"location\"\n    value: \"global\"\n  }\n  quota_value: 20\n}\n, retry_delay {\n  seconds: 41\n}\n]", "event": "task_execution_error", "logger": "app.main", "level": "error", "timestamp": "2026-03-02T22:11:18.656186Z"}
+INFO:     172.22.0.1:59638 - "POST /api/v1/chat/execute-task HTTP/1.1" 200 OK
+INFO:     172.22.0.1:59638 - "POST /api/v1/agent-activity HTTP/1.1" 200 OK
+{"agent": "valuation_agent", "attempted": "ollama", "fallback": "gemini", "event": "Local LLM offline, falling back to cloud", "logger": "app.core.llm.model_router", "level": "warning", "timestamp": "2026-03-02T22:11:18.671622Z"}
+INFO:     172.22.0.1:59632 - "POST /api/v1/chat/execute-task HTTP/1.1" 200 OK
+INFO:     172.22.0.1:59632 - "POST /api/v1/agent-activity HTTP/1.1" 200 OK
+{"agent": "valuation_agent", "attempted": "ollama", "fallback": "gemini", "event": "Local LLM offline, falling back to cloud", "logger": "app.core.llm.model_router", "level": "warning", "timestamp": "2026-03-02T22:11:18.744949Z"}
+INFO:     172.22.0.1:59638 - "POST /api/v1/chat/execute-task HTTP/1.1" 200 OK
+INFO:     172.22.0.1:59638 - "POST /api/v1/agent-activity HTTP/1.1" 200 OK
+{"error": "429 You exceeded your current quota, please check your plan and billing details. For more information on this error, head to: https://ai.google.dev/gemini-api/docs/rate-limits. To monitor your current usage, head to: https://ai.dev/rate-limit. \n* Quota exceeded for metric: generativelanguage.googleapis.com/generate_content_free_tier_requests, limit: 20, model: gemini-3-flash\nPlease retry in 40.815760471s. [links {\n  description: \"Learn more about Gemini API quotas\"\n  url: \"https://ai.google.dev/gemini-api/docs/rate-limits\"\n}\n, violations {\n  quota_metric: \"generativelanguage.googleapis.com/generate_content_free_tier_requests\"\n  quota_id: \"GenerateRequestsPerDayPerProjectPerModel-FreeTier\"\n  quota_dimensions {\n    key: \"model\"\n    value: \"gemini-3-flash\"\n  }\n  quota_dimensions {\n    key: \"location\"\n    value: \"global\"\n  }\n  quota_value: 20\n}\n, retry_delay {\n  seconds: 40\n}\n]", "event": "Gemini generation failed", "logger": "app.core.llm.gemini_client", "level": "error", "timestamp": "2026-03-02T22:11:19.121023Z"}
+{"agent": "dcf_lbo_architect", "error": "429 You exceeded your current quota, please check your plan and billing details. For more information on this error, head to: https://ai.google.dev/gemini-api/docs/rate-limits. To monitor your current usage, head to: https://ai.dev/rate-limit. \n* Quota exceeded for metric: generativelanguage.googleapis.com/generate_content_free_tier_requests, limit: 20, model: gemini-3-flash\nPlease retry in 40.815760471s. [links {\n  description: \"Learn more about Gemini API quotas\"\n  url: \"https://ai.google.dev/gemini-api/docs/rate-limits\"\n}\n, violations {\n  quota_metric: \"generativelanguage.googleapis.com/generate_content_free_tier_requests\"\n  quota_id: \"GenerateRequestsPerDayPerProjectPerModel-FreeTier\"\n  quota_dimensions {\n    key: \"model\"\n    value: \"gemini-3-flash\"\n  }\n  quota_dimensions {\n    key: \"location\"\n    value: \"global\"\n  }\n  quota_value: 20\n}\n, retry_delay {\n  seconds: 40\n}\n]", "event": "task_execution_error", "logger": "app.main", "level": "error", "timestamp": "2026-03-02T22:11:19.121205Z"}
+INFO:     172.22.0.1:59632 - "POST /api/v1/chat/execute-task HTTP/1.1" 200 OK
+INFO:     172.22.0.1:59632 - "POST /api/v1/agent-activity HTTP/1.1" 200 OK
+{"agent": "risk_assessor", "attempted": "ollama", "fallback": "gemini", "event": "Local LLM offline, falling back to cloud", "logger": "app.core.llm.model_router", "level": "warning", "timestamp": "2026-03-02T22:11:19.134560Z"}
+INFO:     172.22.0.1:59632 - "GET /api/v1/dashboard/metrics HTTP/1.1" 200 OK
+{"error": "429 You exceeded your current quota, please check your plan and billing details. For more information on this error, head to: https://ai.google.dev/gemini-api/docs/rate-limits. To monitor your current usage, head to: https://ai.dev/rate-limit. \n* Quota exceeded for metric: generativelanguage.googleapis.com/generate_content_free_tier_requests, limit: 20, model: gemini-3-flash\nPlease retry in 40.502941491s. [links {\n  description: \"Learn more about Gemini API quotas\"\n  url: \"https://ai.google.dev/gemini-api/docs/rate-limits\"\n}\n, violations {\n  quota_metric: \"generativelanguage.googleapis.com/generate_content_free_tier_requests\"\n  quota_id: \"GenerateRequestsPerDayPerProjectPerModel-FreeTier\"\n  quota_dimensions {\n    key: \"model\"\n    value: \"gemini-3-flash\"\n  }\n  quota_dimensions {\n    key: \"location\"\n    value: \"global\"\n  }\n  quota_value: 20\n}\n, retry_delay {\n  seconds: 40\n}\n]", "event": "Gemini generation failed", "logger": "app.core.llm.gemini_client", "level": "error", "timestamp": "2026-03-02T22:11:19.432681Z"}
+{"agent": "risk_assessor", "error": "429 You exceeded your current quota, please check your plan and billing details. For more information on this error, head to: https://ai.google.dev/gemini-api/docs/rate-limits. To monitor your current usage, head to: https://ai.dev/rate-limit. \n* Quota exceeded for metric: generativelanguage.googleapis.com/generate_content_free_tier_requests, limit: 20, model: gemini-3-flash\nPlease retry in 40.502941491s. [links {\n  description: \"Learn more about Gemini API quotas\"\n  url: \"https://ai.google.dev/gemini-api/docs/rate-limits\"\n}\n, violations {\n  quota_metric: \"generativelanguage.googleapis.com/generate_content_free_tier_requests\"\n  quota_id: \"GenerateRequestsPerDayPerProjectPerModel-FreeTier\"\n  quota_dimensions {\n    key: \"model\"\n    value: \"gemini-3-flash\"\n  }\n  quota_dimensions {\n    key: \"location\"\n    value: \"global\"\n  }\n  quota_value: 20\n}\n, retry_delay {\n  seconds: 40\n}\n]", "event": "task_execution_error", "logger": "app.main", "level": "error", "timestamp": "2026-03-02T22:11:19.432875Z"}
+INFO:     172.22.0.1:59638 - "POST /api/v1/chat/execute-task HTTP/1.1" 200 OK
+INFO:     172.22.0.1:59638 - "POST /api/v1/agent-activity HTTP/1.1" 200 OK
+{"agent": "legal_advisor", "attempted": "ollama", "fallback": "gemini", "event": "Local LLM offline, falling back to cloud", "logger": "app.core.llm.model_router", "level": "warning", "timestamp": "2026-03-02T22:11:19.447053Z"}
+INFO:     127.0.0.1:40072 - "GET /health HTTP/1.1" 200 OK
+{"error": "429 You exceeded your current quota, please check your plan and billing details. For more information on this error, head to: https://ai.google.dev/gemini-api/docs/rate-limits. To monitor your current usage, head to: https://ai.dev/rate-limit. \n* Quota exceeded for metric: generativelanguage.googleapis.com/generate_content_free_tier_requests, limit: 20, model: gemini-3-flash\nPlease retry in 40.189104653s. [links {\n  description: \"Learn more about Gemini API quotas\"\n  url: \"https://ai.google.dev/gemini-api/docs/rate-limits\"\n}\n, violations {\n  quota_metric: \"generativelanguage.googleapis.com/generate_content_free_tier_requests\"\n  quota_id: \"GenerateRequestsPerDayPerProjectPerModel-FreeTier\"\n  quota_dimensions {\n    key: \"model\"\n    value: \"gemini-3-flash\"\n  }\n  quota_dimensions {\n    key: \"location\"\n    value: \"global\"\n  }\n  quota_value: 20\n}\n, retry_delay {\n  seconds: 40\n}\n]", "event": "Gemini generation failed", "logger": "app.core.llm.gemini_client", "level": "error", "timestamp": "2026-03-02T22:11:19.747423Z"}
+{"agent": "legal_advisor", "error": "429 You exceeded your current quota, please check your plan and billing details. For more information on this error, head to: https://ai.google.dev/gemini-api/docs/rate-limits. To monitor your current usage, head to: https://ai.dev/rate-limit. \n* Quota exceeded for metric: generativelanguage.googleapis.com/generate_content_free_tier_requests, limit: 20, model: gemini-3-flash\nPlease retry in 40.189104653s. [links {\n  description: \"Learn more about Gemini API quotas\"\n  url: \"https://ai.google.dev/gemini-api/docs/rate-limits\"\n}\n, violations {\n  quota_metric: \"generativelanguage.googleapis.com/generate_content_free_tier_requests\"\n  quota_id: \"GenerateRequestsPerDayPerProjectPerModel-FreeTier\"\n  quota_dimensions {\n    key: \"model\"\n    value: \"gemini-3-flash\"\n  }\n  quota_dimensions {\n    key: \"location\"\n    value: \"global\"\n  }\n  quota_value: 20\n}\n, retry_delay {\n  seconds: 40\n}\n]", "event": "task_execution_error", "logger": "app.main", "level": "error", "timestamp": "2026-03-02T22:11:19.747615Z"}
+INFO:     172.22.0.1:59632 - "POST /api/v1/chat/execute-task HTTP/1.1" 200 OK
+INFO:     172.22.0.1:59632 - "POST /api/v1/agent-activity HTTP/1.1" 200 OK
+{"error": "429 You exceeded your current quota, please check your plan and billing details. For more information on this error, head to: https://ai.google.dev/gemini-api/docs/rate-limits. To monitor your current usage, head to: https://ai.dev/rate-limit. \n* Quota exceeded for metric: generativelanguage.googleapis.com/generate_content_free_tier_requests, limit: 20, model: gemini-3-flash\nPlease retry in 39.868641946s. [links {\n  description: \"Learn more about Gemini API quotas\"\n  url: \"https://ai.google.dev/gemini-api/docs/rate-limits\"\n}\n, violations {\n  quota_metric: \"generativelanguage.googleapis.com/generate_content_free_tier_requests\"\n  quota_id: \"GenerateRequestsPerDayPerProjectPerModel-FreeTier\"\n  quota_dimensions {\n    key: \"model\"\n    value: \"gemini-3-flash\"\n  }\n  quota_dimensions {\n    key: \"location\"\n    value: \"global\"\n  }\n  quota_value: 20\n}\n, retry_delay {\n  seconds: 39\n}\n]", "event": "Gemini generation failed", "logger": "app.core.llm.gemini_client", "level": "error", "timestamp": "2026-03-02T22:11:20.072104Z"}
+{"agent": "due_diligence_agent", "error": "429 You exceeded your current quota, please check your plan and billing details. For more information on this error, head to: https://ai.google.dev/gemini-api/docs/rate-limits. To monitor your current usage, head to: https://ai.dev/rate-limit. \n* Quota exceeded for metric: generativelanguage.googleapis.com/generate_content_free_tier_requests, limit: 20, model: gemini-3-flash\nPlease retry in 39.868641946s. [links {\n  description: \"Learn more about Gemini API quotas\"\n  url: \"https://ai.google.dev/gemini-api/docs/rate-limits\"\n}\n, violations {\n  quota_metric: \"generativelanguage.googleapis.com/generate_content_free_tier_requests\"\n  quota_id: \"GenerateRequestsPerDayPerProjectPerModel-FreeTier\"\n  quota_dimensions {\n    key: \"model\"\n    value: \"gemini-3-flash\"\n  }\n  quota_dimensions {\n    key: \"location\"\n    value: \"global\"\n  }\n  quota_value: 20\n}\n, retry_delay {\n  seconds: 39\n}\n]", "event": "task_execution_error", "logger": "app.main", "level": "error", "timestamp": "2026-03-02T22:11:20.072290Z"}
+INFO:     172.22.0.1:59638 - "POST /api/v1/chat/execute-task HTTP/1.1" 200 OK
+INFO:     172.22.0.1:59638 - "POST /api/v1/agent-activity HTTP/1.1" 200 OK
+{"agent": "debate_moderator", "attempted": "ollama", "fallback": "gemini", "event": "Local LLM offline, falling back to cloud", "logger": "app.core.llm.model_router", "level": "warning", "timestamp": "2026-03-02T22:11:20.086837Z"}
+INFO:     172.22.0.1:59632 - "POST /api/v1/chat/execute-task HTTP/1.1" 200 OK
+INFO:     172.22.0.1:59632 - "POST /api/v1/agent-activity HTTP/1.1" 200 OK
+{"agent": "scoring_agent", "attempted": "ollama", "fallback": "gemini", "event": "Local LLM offline, falling back to cloud", "logger": "app.core.llm.model_router", "level": "warning", "timestamp": "2026-03-02T22:11:20.151016Z"}
+INFO:     172.22.0.1:59638 - "POST /api/v1/chat/execute-task HTTP/1.1" 200 OK
+INFO:     172.22.0.1:59638 - "POST /api/v1/agent-activity HTTP/1.1" 200 OK
+{"error": "429 You exceeded your current quota, please check your plan and billing details. For more information on this error, head to: https://ai.google.dev/gemini-api/docs/rate-limits. To monitor your current usage, head to: https://ai.dev/rate-limit. \n* Quota exceeded for metric: generativelanguage.googleapis.com/generate_content_free_tier_requests, limit: 20, model: gemini-3-flash\nPlease retry in 39.412593006s. [links {\n  description: \"Learn more about Gemini API quotas\"\n  url: \"https://ai.google.dev/gemini-api/docs/rate-limits\"\n}\n, violations {\n  quota_metric: \"generativelanguage.googleapis.com/generate_content_free_tier_requests\"\n  quota_id: \"GenerateRequestsPerDayPerProjectPerModel-FreeTier\"\n  quota_dimensions {\n    key: \"model\"\n    value: \"gemini-3-flash\"\n  }\n  quota_dimensions {\n    key: \"location\"\n    value: \"global\"\n  }\n  quota_value: 20\n}\n, retry_delay {\n  seconds: 39\n}\n]", "event": "Gemini generation failed", "logger": "app.core.llm.gemini_client", "level": "error", "timestamp": "2026-03-02T22:11:20.524362Z"}
+{"agent": "investment_memo_agent", "error": "429 You exceeded your current quota, please check your plan and billing details. For more information on this error, head to: https://ai.google.dev/gemini-api/docs/rate-limits. To monitor your current usage, head to: https://ai.dev/rate-limit. \n* Quota exceeded for metric: generativelanguage.googleapis.com/generate_content_free_tier_requests, limit: 20, model: gemini-3-flash\nPlease retry in 39.412593006s. [links {\n  description: \"Learn more about Gemini API quotas\"\n  url: \"https://ai.google.dev/gemini-api/docs/rate-limits\"\n}\n, violations {\n  quota_metric: \"generativelanguage.googleapis.com/generate_content_free_tier_requests\"\n  quota_id: \"GenerateRequestsPerDayPerProjectPerModel-FreeTier\"\n  quota_dimensions {\n    key: \"model\"\n    value: \"gemini-3-flash\"\n  }\n  quota_dimensions {\n    key: \"location\"\n    value: \"global\"\n  }\n  quota_value: 20\n}\n, retry_delay {\n  seconds: 39\n}\n]", "event": "task_execution_error", "logger": "app.main", "level": "error", "timestamp": "2026-03-02T22:11:20.524602Z"}
+INFO:     172.22.0.1:59632 - "POST /api/v1/chat/execute-task HTTP/1.1" 200 OK
+INFO:     172.22.0.1:59632 - "POST /api/v1/agent-activity HTTP/1.1" 200 OK
+INFO:     172.22.0.1:59632 - "GET /api/v1/dashboard/metrics HTTP/1.1" 200 OK
+INFO:     172.22.0.1:59642 - "GET /api/v1/dashboard/metrics HTTP/1.1" 200 OK
+INFO:     127.0.0.1:52006 - "GET /health HTTP/1.1" 200 OK
+INFO:     172.22.0.1:37826 - "GET /api/v1/dashboard/metrics HTTP/1.1" 200 OK
+INFO:     172.22.0.1:49502 - "GET /api/v1/dashboard/metrics HTTP/1.1" 200 OK
+INFO:     127.0.0.1:42156 - "GET /health HTTP/1.1" 200 OK
+INFO:     172.22.0.1:49510 - "GET /api/v1/dashboard/metrics HTTP/1.1" 200 OK
+INFO:     172.22.0.1:41016 - "GET /api/v1/dashboard/metrics HTTP/1.1" 200 OK
+INFO:     127.0.0.1:38282 - "GET /health HTTP/1.1" 200 OK
+INFO:     172.22.0.1:41786 - "GET /api/v1/dashboard/metrics HTTP/1.1" 200 OK
+INFO:     172.22.0.1:46398 - "GET /api/v1/dashboard/metrics HTTP/1.1" 200 OK
+INFO:     127.0.0.1:48404 - "GET /health HTTP/1.1" 200 OK
+INFO:     172.22.0.1:46400 - "GET /api/v1/dashboard/metrics HTTP/1.1" 200 OK
+INFO:     172.22.0.1:33614 - "GET /api/v1/models/routing HTTP/1.1" 200 OK
+INFO:     172.22.0.1:33626 - "GET /api/v1/dashboard/metrics HTTP/1.1" 200 OK
+INFO:     127.0.0.1:42694 - "GET /health HTTP/1.1" 200 OK
+INFO:     172.22.0.1:37588 - "GET /api/v1/dashboard/metrics HTTP/1.1" 200 OK
+INFO:     172.22.0.1:34782 - "GET /api/v1/dashboard/metrics HTTP/1.1" 200 OK
+INFO:     127.0.0.1:42994 - "GET /health HTTP/1.1" 200 OK
+INFO:     172.22.0.1:34796 - "GET /api/v1/dashboard/metrics HTTP/1.1" 200 OK
+INFO:     172.22.0.1:59910 - "GET /api/v1/dashboard/metrics HTTP/1.1" 200 OK
+INFO:     127.0.0.1:47910 - "GET /health HTTP/1.1" 200 OK
+INFO:     172.22.0.1:53242 - "GET /api/v1/dashboard/metrics HTTP/1.1" 200 OK
+INFO:     172.22.0.1:59548 - "GET /api/v1/dashboard/metrics HTTP/1.1" 200 OK
+INFO:     127.0.0.1:35958 - "GET /health HTTP/1.1" 200 OK
+INFO:     172.22.0.1:59558 - "GET /api/v1/dashboard/metrics HTTP/1.1" 200 OK
+INFO:     172.22.0.1:54044 - "GET /api/v1/dashboard/metrics HTTP/1.1" 200 OK
+INFO:     127.0.0.1:60044 - "GET /health HTTP/1.1" 200 OK
+INFO:     172.22.0.1:51806 - "GET /api/v1/dashboard/metrics HTTP/1.1" 200 OK
+INFO:     172.22.0.1:54050 - "GET /api/v1/dashboard/metrics HTTP/1.1" 200 OK
+INFO:     127.0.0.1:42024 - "GET /health HTTP/1.1" 200 OK
+INFO:     172.22.0.1:54060 - "GET /api/v1/dashboard/metrics HTTP/1.1" 200 OK
+INFO:     172.22.0.1:60854 - "GET /api/v1/dashboard/metrics HTTP/1.1" 200 OK
+INFO:     127.0.0.1:33820 - "GET /health HTTP/1.1" 200 OK
+INFO:     172.22.0.1:56528 - "GET /api/v1/dashboard/metrics HTTP/1.1" 200 OK
+INFO:     172.22.0.1:48770 - "GET /api/v1/dashboard/metrics HTTP/1.1" 200 OK
+INFO:     127.0.0.1:45700 - "GET /health HTTP/1.1" 200 OK
+INFO:     172.22.0.1:48776 - "GET /api/v1/dashboard/metrics HTTP/1.1" 200 OK
+INFO:     172.22.0.1:49210 - "GET /api/v1/dashboard/metrics HTTP/1.1" 200 OK
+INFO:     127.0.0.1:34272 - "GET /health HTTP/1.1" 200 OK
+INFO:     172.22.0.1:50950 - "GET /api/v1/dashboard/metrics HTTP/1.1" 200 OK
+INFO:     172.22.0.1:43734 - "GET /api/v1/dashboard/metrics HTTP/1.1" 200 OK
+INFO:     127.0.0.1:59026 - "GET /health HTTP/1.1" 200 OK
+INFO:     172.22.0.1:43738 - "GET /api/v1/dashboard/metrics HTTP/1.1" 200 OK
+INFO:     172.22.0.1:43304 - "GET /api/v1/dashboard/metrics HTTP/1.1" 200 OK
+INFO:     127.0.0.1:51690 - "GET /health HTTP/1.1" 200 OK
+INFO:     172.22.0.1:43198 - "GET /api/v1/dashboard/metrics HTTP/1.1" 200 OK
+INFO:     172.22.0.1:35656 - "GET /api/v1/dashboard/metrics HTTP/1.1" 200 OK
+INFO:     127.0.0.1:59620 - "GET /health HTTP/1.1" 200 OK
+INFO:     172.22.0.1:35658 - "GET /api/v1/dashboard/metrics HTTP/1.1" 200 OK
+INFO:     172.22.0.1:48976 - "GET /api/v1/dashboard/metrics HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56656 - "GET /health HTTP/1.1" 200 OK
+INFO:     172.22.0.1:36944 - "GET /api/v1/dashboard/metrics HTTP/1.1" 200 OK
+INFO:     172.22.0.1:53056 - "GET /api/v1/dashboard/metrics HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58256 - "GET /health HTTP/1.1" 200 OK
+INFO:     172.22.0.1:53058 - "GET /api/v1/dashboard/metrics HTTP/1.1" 200 OK
+INFO:     172.22.0.1:46662 - "GET /api/v1/dashboard/metrics HTTP/1.1" 200 OK
+INFO:     127.0.0.1:36212 - "GET /health HTTP/1.1" 200 OK
+INFO:     172.22.0.1:41362 - "GET /api/v1/dashboard/metrics HTTP/1.1" 200 OK
+INFO:     172.22.0.1:56676 - "GET /api/v1/dashboard/metrics HTTP/1.1" 200 OK
+INFO:     127.0.0.1:44928 - "GET /health HTTP/1.1" 200 OK
+INFO:     172.22.0.1:56678 - "GET /api/v1/dashboard/metrics HTTP/1.1" 200 OK
+INFO:     172.22.0.1:56670 - "GET /api/v1/dashboard/metrics HTTP/1.1" 200 OK
+INFO:     127.0.0.1:45438 - "GET /health HTTP/1.1" 200 OK
+INFO:     172.22.0.1:49294 - "GET /api/v1/dashboard/metrics HTTP/1.1" 200 OK
+INFO:     172.22.0.1:36270 - "GET /api/v1/dashboard/metrics HTTP/1.1" 200 OK
+INFO:     127.0.0.1:38710 - "GET /health HTTP/1.1" 200 OK
+INFO:     172.22.0.1:36276 - "GET /api/v1/dashboard/metrics HTTP/1.1" 200 OK
+INFO:     172.22.0.1:46280 - "GET /api/v1/dashboard/metrics HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49374 - "GET /health HTTP/1.1" 200 OK
+INFO:     172.22.0.1:46720 - "GET /api/v1/dashboard/metrics HTTP/1.1" 200 OK
+INFO:     172.22.0.1:33208 - "GET /api/v1/dashboard/metrics HTTP/1.1" 200 OK
+INFO:     127.0.0.1:45916 - "GET /health HTTP/1.1" 200 OK
+INFO:     172.22.0.1:33216 - "GET /api/v1/dashboard/metrics HTTP/1.1" 200 OK
+INFO:     172.22.0.1:38100 - "GET /api/v1/dashboard/metrics HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57758 - "GET /health HTTP/1.1" 200 OK
+INFO:     172.22.0.1:57950 - "GET /api/v1/dashboard/metrics HTTP/1.1" 200 OK
+INFO:     172.22.0.1:50636 - "GET /api/v1/dashboard/metrics HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49104 - "GET /health HTTP/1.1" 200 OK
+INFO:     172.22.0.1:50646 - "GET /api/v1/dashboard/metrics HTTP/1.1" 200 OK
+INFO:     172.22.0.1:39866 - "GET /api/v1/dashboard/metrics HTTP/1.1" 200 OK
+INFO:     127.0.0.1:52270 - "GET /health HTTP/1.1" 200 OK
+INFO:     172.22.0.1:57906 - "GET /api/v1/dashboard/metrics HTTP/1.1" 200 OK
+INFO:     172.22.0.1:58876 - "GET /api/v1/dashboard/metrics HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56096 - "GET /health HTTP/1.1" 200 OK
+INFO:     172.22.0.1:58878 - "GET /api/v1/dashboard/metrics HTTP/1.1" 200 OK
+INFO:     172.22.0.1:59890 - "GET /api/v1/dashboard/metrics HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54966 - "GET /health HTTP/1.1" 200 OK
+INFO:     172.22.0.1:49822 - "GET /api/v1/dashboard/metrics HTTP/1.1" 200 OK
+INFO:     172.22.0.1:40932 - "GET /api/v1/dashboard/metrics HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50086 - "GET /health HTTP/1.1" 200 OK
+INFO:     172.22.0.1:40944 - "GET /api/v1/dashboard/metrics HTTP/1.1" 200 OK
+INFO:     172.22.0.1:49812 - "GET /api/v1/dashboard/metrics HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49124 - "GET /health HTTP/1.1" 200 OK
+INFO:     172.22.0.1:32850 - "GET /api/v1/dashboard/metrics HTTP/1.1" 200 OK
+INFO:     172.22.0.1:47628 - "GET /api/v1/dashboard/metrics HTTP/1.1" 200 OK
+INFO:     127.0.0.1:35146 - "GET /health HTTP/1.1" 200 OK
+INFO:     172.22.0.1:47630 - "GET /api/v1/dashboard/metrics HTTP/1.1" 200 OK
+INFO:     172.22.0.1:55030 - "GET /api/v1/dashboard/metrics HTTP/1.1" 200 OK
+INFO:     127.0.0.1:60118 - "GET /health HTTP/1.1" 200 OK
+INFO:     172.22.0.1:43358 - "GET /api/v1/dashboard/metrics HTTP/1.1" 200 OK
+INFO:     172.22.0.1:34164 - "GET /api/v1/dashboard/metrics HTTP/1.1" 200 OK
+INFO:     127.0.0.1:35270 - "GET /health HTTP/1.1" 200 OK
+INFO:     172.22.0.1:34166 - "GET /api/v1/dashboard/metrics HTTP/1.1" 200 OK
+INFO:     172.22.0.1:44016 - "GET /api/v1/dashboard/metrics HTTP/1.1" 200 OK
+INFO:     127.0.0.1:32942 - "GET /health HTTP/1.1" 200 OK
+INFO:     172.22.0.1:52298 - "GET /api/v1/dashboard/metrics HTTP/1.1" 200 OK
+INFO:     172.22.0.1:39400 - "GET /api/v1/dashboard/metrics HTTP/1.1" 200 OK
+INFO:     127.0.0.1:48462 - "GET /health HTTP/1.1" 200 OK
+INFO:     172.22.0.1:39416 - "GET /api/v1/dashboard/metrics HTTP/1.1" 200 OK
+INFO:     172.22.0.1:44944 - "GET /api/v1/dashboard/metrics HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55570 - "GET /health HTTP/1.1" 200 OK
+INFO:     172.22.0.1:49758 - "GET /api/v1/dashboard/metrics HTTP/1.1" 200 OK
+INFO:     172.22.0.1:39492 - "GET /api/v1/dashboard/metrics HTTP/1.1" 200 OK
+INFO:     127.0.0.1:38038 - "GET /health HTTP/1.1" 200 OK
+INFO:     172.22.0.1:39502 - "GET /api/v1/dashboard/metrics HTTP/1.1" 200 OK
+INFO:     172.22.0.1:35550 - "GET /api/v1/dashboard/metrics HTTP/1.1" 200 OK
+INFO:     127.0.0.1:43360 - "GET /health HTTP/1.1" 200 OK
+INFO:     172.22.0.1:37778 - "GET /api/v1/dashboard/metrics HTTP/1.1" 200 OK
+INFO:     172.22.0.1:34698 - "GET /api/v1/dashboard/metrics HTTP/1.1" 200 OK
+INFO:     127.0.0.1:53268 - "GET /health HTTP/1.1" 200 OK
+INFO:     172.22.0.1:34704 - "GET /api/v1/dashboard/metrics HTTP/1.1" 200 OK
+INFO:     172.22.0.1:59274 - "GET /api/v1/dashboard/metrics HTTP/1.1" 200 OK
+INFO:     127.0.0.1:35484 - "GET /health HTTP/1.1" 200 OK
+INFO:     172.22.0.1:34280 - "GET /api/v1/dashboard/metrics HTTP/1.1" 200 OK
+INFO:     172.22.0.1:53032 - "GET /api/v1/dashboard/metrics HTTP/1.1" 200 OK
+INFO:     127.0.0.1:38180 - "GET /health HTTP/1.1" 200 OK
+INFO:     172.22.0.1:53036 - "GET /api/v1/dashboard/metrics HTTP/1.1" 200 OK
+INFO:     172.22.0.1:35934 - "GET /api/v1/dashboard/metrics HTTP/1.1" 200 OK
+INFO:     127.0.0.1:35260 - "GET /health HTTP/1.1" 200 OK
+INFO:     172.22.0.1:45902 - "GET /api/v1/dashboard/metrics HTTP/1.1" 200 OK
+INFO:     172.22.0.1:50232 - "GET /api/v1/dashboard/metrics HTTP/1.1" 200 OK
+INFO:     127.0.0.1:46354 - "GET /health HTTP/1.1" 200 OK
+INFO:     172.22.0.1:50248 - "GET /api/v1/dashboard/metrics HTTP/1.1" 200 OK
+INFO:     172.22.0.1:45574 - "GET /api/v1/dashboard/metrics HTTP/1.1" 200 OK
+INFO:     127.0.0.1:42330 - "GET /health HTTP/1.1" 200 OK
+INFO:     172.22.0.1:50704 - "GET /api/v1/dashboard/metrics HTTP/1.1" 200 OK
+INFO:     172.22.0.1:33522 - "OPTIONS /api/v1/settings HTTP/1.1" 200 OK
+INFO:     172.22.0.1:33522 - "POST /api/v1/settings HTTP/1.1" 200 OK
+INFO:     172.22.0.1:33522 - "POST /api/v1/settings HTTP/1.1" 200 OK
+INFO:     172.22.0.1:33522 - "GET /api/v1/dashboard/metrics HTTP/1.1" 200 OK
+INFO:     172.22.0.1:33532 - "GET /api/v1/dashboard/metrics HTTP/1.1" 200 OK
+INFO:     127.0.0.1:45158 - "GET /health HTTP/1.1" 200 OK
+INFO:     172.22.0.1:33532 - "OPTIONS /api/v1/deals HTTP/1.1" 200 OK
+INFO:     172.22.0.1:33532 - "POST /api/v1/deals HTTP/1.1" 200 OK
+INFO:     172.22.0.1:33532 - "OPTIONS /api/v1/chat/plan HTTP/1.1" 200 OK
+{"error": "429 You exceeded your current quota, please check your plan and billing details. For more information on this error, head to: https://ai.google.dev/gemini-api/docs/rate-limits. To monitor your current usage, head to: https://ai.dev/rate-limit. \n* Quota exceeded for metric: generativelanguage.googleapis.com/generate_content_free_tier_requests, limit: 20, model: gemini-3-flash\nPlease retry in 59.965309785s. [links {\n  description: \"Learn more about Gemini API quotas\"\n  url: \"https://ai.google.dev/gemini-api/docs/rate-limits\"\n}\n, violations {\n  quota_metric: \"generativelanguage.googleapis.com/generate_content_free_tier_requests\"\n  quota_id: \"GenerateRequestsPerDayPerProjectPerModel-FreeTier\"\n  quota_dimensions {\n    key: \"model\"\n    value: \"gemini-3-flash\"\n  }\n  quota_dimensions {\n    key: \"location\"\n    value: \"global\"\n  }\n  quota_value: 20\n}\n, retry_delay {\n  seconds: 59\n}\n]", "event": "Gemini generation failed", "logger": "app.core.llm.gemini_client", "level": "error", "timestamp": "2026-03-02T22:22:59.999740Z"}
+{"agent": "project_manager", "error": "429 You exceeded your current quota, please check your plan and billing details. For more information on this error, head to: https://ai.google.dev/gemini-api/docs/rate-limits. To monitor your current usage, head to: https://ai.dev/rate-limit. \n* Quota exceeded for metric: generativelanguage.googleapis.com/generate_content_free_tier_requests, limit: 20, model: gemini-3-flash\nPlease retry in 59.965309785s. [links {\n  description: \"Learn more about Gemini API quotas\"\n  url: \"https://ai.google.dev/gemini-api/docs/rate-limits\"\n}\n, violations {\n  quota_metric: \"generativelanguage.googleapis.com/generate_content_free_tier_requests\"\n  quota_id: \"GenerateRequestsPerDayPerProjectPerModel-FreeTier\"\n  quota_dimensions {\n    key: \"model\"\n    value: \"gemini-3-flash\"\n  }\n  quota_dimensions {\n    key: \"location\"\n    value: \"global\"\n  }\n  quota_value: 20\n}\n, retry_delay {\n  seconds: 59\n}\n]", "event": "llm_task_generation_failed", "logger": "app.agents.project_manager", "level": "warning", "timestamp": "2026-03-02T22:23:00.004579Z"}
+INFO:     172.22.0.1:44670 - "POST /api/v1/chat/plan HTTP/1.1" 200 OK
+INFO:     172.22.0.1:44670 - "OPTIONS /api/v1/chat/execute-task HTTP/1.1" 200 OK
+{"agent": "financial_analyst", "attempted": "lmstudio", "fallback": "gemini", "event": "Local LLM offline, falling back to cloud", "logger": "app.core.llm.model_router", "level": "warning", "timestamp": "2026-03-02T22:23:00.180465Z"}
+{"error": "429 You exceeded your current quota, please check your plan and billing details. For more information on this error, head to: https://ai.google.dev/gemini-api/docs/rate-limits. To monitor your current usage, head to: https://ai.dev/rate-limit. \n* Quota exceeded for metric: generativelanguage.googleapis.com/generate_content_free_tier_requests, limit: 20, model: gemini-3-flash\nPlease retry in 59.384789895s. [links {\n  description: \"Learn more about Gemini API quotas\"\n  url: \"https://ai.google.dev/gemini-api/docs/rate-limits\"\n}\n, violations {\n  quota_metric: \"generativelanguage.googleapis.com/generate_content_free_tier_requests\"\n  quota_id: \"GenerateRequestsPerDayPerProjectPerModel-FreeTier\"\n  quota_dimensions {\n    key: \"model\"\n    value: \"gemini-3-flash\"\n  }\n  quota_dimensions {\n    key: \"location\"\n    value: \"global\"\n  }\n  quota_value: 20\n}\n, retry_delay {\n  seconds: 59\n}\n]", "event": "Gemini generation failed", "logger": "app.core.llm.gemini_client", "level": "error", "timestamp": "2026-03-02T22:23:00.563992Z"}
+{"agent": "financial_analyst", "error": "429 You exceeded your current quota, please check your plan and billing details. For more information on this error, head to: https://ai.google.dev/gemini-api/docs/rate-limits. To monitor your current usage, head to: https://ai.dev/rate-limit. \n* Quota exceeded for metric: generativelanguage.googleapis.com/generate_content_free_tier_requests, limit: 20, model: gemini-3-flash\nPlease retry in 59.384789895s. [links {\n  description: \"Learn more about Gemini API quotas\"\n  url: \"https://ai.google.dev/gemini-api/docs/rate-limits\"\n}\n, violations {\n  quota_metric: \"generativelanguage.googleapis.com/generate_content_free_tier_requests\"\n  quota_id: \"GenerateRequestsPerDayPerProjectPerModel-FreeTier\"\n  quota_dimensions {\n    key: \"model\"\n    value: \"gemini-3-flash\"\n  }\n  quota_dimensions {\n    key: \"location\"\n    value: \"global\"\n  }\n  quota_value: 20\n}\n, retry_delay {\n  seconds: 59\n}\n]", "event": "task_execution_error", "logger": "app.main", "level": "error", "timestamp": "2026-03-02T22:23:00.564208Z"}
+INFO:     172.22.0.1:33532 - "POST /api/v1/chat/execute-task HTTP/1.1" 200 OK
+INFO:     172.22.0.1:33532 - "OPTIONS /api/v1/agent-activity HTTP/1.1" 200 OK
+INFO:     172.22.0.1:33532 - "POST /api/v1/agent-activity HTTP/1.1" 200 OK
+{"agent": "market_researcher", "attempted": "lmstudio", "fallback": "gemini", "event": "Local LLM offline, falling back to cloud", "logger": "app.core.llm.model_router", "level": "warning", "timestamp": "2026-03-02T22:23:00.585292Z"}
+{"error": "429 You exceeded your current quota, please check your plan and billing details. For more information on this error, head to: https://ai.google.dev/gemini-api/docs/rate-limits. To monitor your current usage, head to: https://ai.dev/rate-limit. \n* Quota exceeded for metric: generativelanguage.googleapis.com/generate_content_free_tier_requests, limit: 20, model: gemini-3-flash\nPlease retry in 59.036486541s. [links {\n  description: \"Learn more about Gemini API quotas\"\n  url: \"https://ai.google.dev/gemini-api/docs/rate-limits\"\n}\n, violations {\n  quota_metric: \"generativelanguage.googleapis.com/generate_content_free_tier_requests\"\n  quota_id: \"GenerateRequestsPerDayPerProjectPerModel-FreeTier\"\n  quota_dimensions {\n    key: \"model\"\n    value: \"gemini-3-flash\"\n  }\n  quota_dimensions {\n    key: \"location\"\n    value: \"global\"\n  }\n  quota_value: 20\n}\n, retry_delay {\n  seconds: 59\n}\n]", "event": "Gemini generation failed", "logger": "app.core.llm.gemini_client", "level": "error", "timestamp": "2026-03-02T22:23:00.911881Z"}
+{"agent": "market_researcher", "error": "429 You exceeded your current quota, please check your plan and billing details. For more information on this error, head to: https://ai.google.dev/gemini-api/docs/rate-limits. To monitor your current usage, head to: https://ai.dev/rate-limit. \n* Quota exceeded for metric: generativelanguage.googleapis.com/generate_content_free_tier_requests, limit: 20, model: gemini-3-flash\nPlease retry in 59.036486541s. [links {\n  description: \"Learn more about Gemini API quotas\"\n  url: \"https://ai.google.dev/gemini-api/docs/rate-limits\"\n}\n, violations {\n  quota_metric: \"generativelanguage.googleapis.com/generate_content_free_tier_requests\"\n  quota_id: \"GenerateRequestsPerDayPerProjectPerModel-FreeTier\"\n  quota_dimensions {\n    key: \"model\"\n    value: \"gemini-3-flash\"\n  }\n  quota_dimensions {\n    key: \"location\"\n    value: \"global\"\n  }\n  quota_value: 20\n}\n, retry_delay {\n  seconds: 59\n}\n]", "event": "task_execution_error", "logger": "app.main", "level": "error", "timestamp": "2026-03-02T22:23:00.912099Z"}
+INFO:     172.22.0.1:44670 - "POST /api/v1/chat/execute-task HTTP/1.1" 200 OK
+INFO:     172.22.0.1:44670 - "POST /api/v1/agent-activity HTTP/1.1" 200 OK
+{"agent": "valuation_agent", "attempted": "lmstudio", "fallback": "gemini", "event": "Local LLM offline, falling back to cloud", "logger": "app.core.llm.model_router", "level": "warning", "timestamp": "2026-03-02T22:23:00.927131Z"}
+INFO:     172.22.0.1:33532 - "POST /api/v1/chat/execute-task HTTP/1.1" 200 OK
+INFO:     172.22.0.1:33532 - "POST /api/v1/agent-activity HTTP/1.1" 200 OK
+{"agent": "valuation_agent", "attempted": "lmstudio", "fallback": "gemini", "event": "Local LLM offline, falling back to cloud", "logger": "app.core.llm.model_router", "level": "warning", "timestamp": "2026-03-02T22:23:01.005891Z"}
+INFO:     172.22.0.1:44670 - "POST /api/v1/chat/execute-task HTTP/1.1" 200 OK
+INFO:     172.22.0.1:44670 - "POST /api/v1/agent-activity HTTP/1.1" 200 OK
+{"error": "429 You exceeded your current quota, please check your plan and billing details. For more information on this error, head to: https://ai.google.dev/gemini-api/docs/rate-limits. To monitor your current usage, head to: https://ai.dev/rate-limit. \n* Quota exceeded for metric: generativelanguage.googleapis.com/generate_content_free_tier_requests, limit: 20, model: gemini-3-flash\nPlease retry in 58.729814433s. [links {\n  description: \"Learn more about Gemini API quotas\"\n  url: \"https://ai.google.dev/gemini-api/docs/rate-limits\"\n}\n, violations {\n  quota_metric: \"generativelanguage.googleapis.com/generate_content_free_tier_requests\"\n  quota_id: \"GenerateRequestsPerDayPerProjectPerModel-FreeTier\"\n  quota_dimensions {\n    key: \"model\"\n    value: \"gemini-3-flash\"\n  }\n  quota_dimensions {\n    key: \"location\"\n    value: \"global\"\n  }\n  quota_value: 20\n}\n, retry_delay {\n  seconds: 58\n}\n]", "event": "Gemini generation failed", "logger": "app.core.llm.gemini_client", "level": "error", "timestamp": "2026-03-02T22:23:01.217166Z"}
+{"agent": "dcf_lbo_architect", "error": "429 You exceeded your current quota, please check your plan and billing details. For more information on this error, head to: https://ai.google.dev/gemini-api/docs/rate-limits. To monitor your current usage, head to: https://ai.dev/rate-limit. \n* Quota exceeded for metric: generativelanguage.googleapis.com/generate_content_free_tier_requests, limit: 20, model: gemini-3-flash\nPlease retry in 58.729814433s. [links {\n  description: \"Learn more about Gemini API quotas\"\n  url: \"https://ai.google.dev/gemini-api/docs/rate-limits\"\n}\n, violations {\n  quota_metric: \"generativelanguage.googleapis.com/generate_content_free_tier_requests\"\n  quota_id: \"GenerateRequestsPerDayPerProjectPerModel-FreeTier\"\n  quota_dimensions {\n    key: \"model\"\n    value: \"gemini-3-flash\"\n  }\n  quota_dimensions {\n    key: \"location\"\n    value: \"global\"\n  }\n  quota_value: 20\n}\n, retry_delay {\n  seconds: 58\n}\n]", "event": "task_execution_error", "logger": "app.main", "level": "error", "timestamp": "2026-03-02T22:23:01.217349Z"}
+INFO:     172.22.0.1:33532 - "POST /api/v1/chat/execute-task HTTP/1.1" 200 OK
+INFO:     172.22.0.1:33532 - "POST /api/v1/agent-activity HTTP/1.1" 200 OK
+{"agent": "risk_assessor", "attempted": "lmstudio", "fallback": "gemini", "event": "Local LLM offline, falling back to cloud", "logger": "app.core.llm.model_router", "level": "warning", "timestamp": "2026-03-02T22:23:01.231071Z"}
+{"error": "429 You exceeded your current quota, please check your plan and billing details. For more information on this error, head to: https://ai.google.dev/gemini-api/docs/rate-limits. To monitor your current usage, head to: https://ai.dev/rate-limit. \n* Quota exceeded for metric: generativelanguage.googleapis.com/generate_content_free_tier_requests, limit: 20, model: gemini-3-flash\nPlease retry in 58.41574307s. [links {\n  description: \"Learn more about Gemini API quotas\"\n  url: \"https://ai.google.dev/gemini-api/docs/rate-limits\"\n}\n, violations {\n  quota_metric: \"generativelanguage.googleapis.com/generate_content_free_tier_requests\"\n  quota_id: \"GenerateRequestsPerDayPerProjectPerModel-FreeTier\"\n  quota_dimensions {\n    key: \"model\"\n    value: \"gemini-3-flash\"\n  }\n  quota_dimensions {\n    key: \"location\"\n    value: \"global\"\n  }\n  quota_value: 20\n}\n, retry_delay {\n  seconds: 58\n}\n]", "event": "Gemini generation failed", "logger": "app.core.llm.gemini_client", "level": "error", "timestamp": "2026-03-02T22:23:01.532048Z"}
+{"agent": "risk_assessor", "error": "429 You exceeded your current quota, please check your plan and billing details. For more information on this error, head to: https://ai.google.dev/gemini-api/docs/rate-limits. To monitor your current usage, head to: https://ai.dev/rate-limit. \n* Quota exceeded for metric: generativelanguage.googleapis.com/generate_content_free_tier_requests, limit: 20, model: gemini-3-flash\nPlease retry in 58.41574307s. [links {\n  description: \"Learn more about Gemini API quotas\"\n  url: \"https://ai.google.dev/gemini-api/docs/rate-limits\"\n}\n, violations {\n  quota_metric: \"generativelanguage.googleapis.com/generate_content_free_tier_requests\"\n  quota_id: \"GenerateRequestsPerDayPerProjectPerModel-FreeTier\"\n  quota_dimensions {\n    key: \"model\"\n    value: \"gemini-3-flash\"\n  }\n  quota_dimensions {\n    key: \"location\"\n    value: \"global\"\n  }\n  quota_value: 20\n}\n, retry_delay {\n  seconds: 58\n}\n]", "event": "task_execution_error", "logger": "app.main", "level": "error", "timestamp": "2026-03-02T22:23:01.532270Z"}
+INFO:     172.22.0.1:44670 - "POST /api/v1/chat/execute-task HTTP/1.1" 200 OK
+INFO:     172.22.0.1:44670 - "POST /api/v1/agent-activity HTTP/1.1" 200 OK
+{"agent": "legal_advisor", "attempted": "lmstudio", "fallback": "gemini", "event": "Local LLM offline, falling back to cloud", "logger": "app.core.llm.model_router", "level": "warning", "timestamp": "2026-03-02T22:23:01.548148Z"}
+{"error": "429 You exceeded your current quota, please check your plan and billing details. For more information on this error, head to: https://ai.google.dev/gemini-api/docs/rate-limits. To monitor your current usage, head to: https://ai.dev/rate-limit. \n* Quota exceeded for metric: generativelanguage.googleapis.com/generate_content_free_tier_requests, limit: 20, model: gemini-3-flash\nPlease retry in 58.090712815s. [links {\n  description: \"Learn more about Gemini API quotas\"\n  url: \"https://ai.google.dev/gemini-api/docs/rate-limits\"\n}\n, violations {\n  quota_metric: \"generativelanguage.googleapis.com/generate_content_free_tier_requests\"\n  quota_id: \"GenerateRequestsPerDayPerProjectPerModel-FreeTier\"\n  quota_dimensions {\n    key: \"model\"\n    value: \"gemini-3-flash\"\n  }\n  quota_dimensions {\n    key: \"location\"\n    value: \"global\"\n  }\n  quota_value: 20\n}\n, retry_delay {\n  seconds: 58\n}\n]", "event": "Gemini generation failed", "logger": "app.core.llm.gemini_client", "level": "error", "timestamp": "2026-03-02T22:23:01.856687Z"}
+{"agent": "legal_advisor", "error": "429 You exceeded your current quota, please check your plan and billing details. For more information on this error, head to: https://ai.google.dev/gemini-api/docs/rate-limits. To monitor your current usage, head to: https://ai.dev/rate-limit. \n* Quota exceeded for metric: generativelanguage.googleapis.com/generate_content_free_tier_requests, limit: 20, model: gemini-3-flash\nPlease retry in 58.090712815s. [links {\n  description: \"Learn more about Gemini API quotas\"\n  url: \"https://ai.google.dev/gemini-api/docs/rate-limits\"\n}\n, violations {\n  quota_metric: \"generativelanguage.googleapis.com/generate_content_free_tier_requests\"\n  quota_id: \"GenerateRequestsPerDayPerProjectPerModel-FreeTier\"\n  quota_dimensions {\n    key: \"model\"\n    value: \"gemini-3-flash\"\n  }\n  quota_dimensions {\n    key: \"location\"\n    value: \"global\"\n  }\n  quota_value: 20\n}\n, retry_delay {\n  seconds: 58\n}\n]", "event": "task_execution_error", "logger": "app.main", "level": "error", "timestamp": "2026-03-02T22:23:01.857223Z"}
+INFO:     172.22.0.1:33532 - "POST /api/v1/chat/execute-task HTTP/1.1" 200 OK
+INFO:     172.22.0.1:33532 - "POST /api/v1/agent-activity HTTP/1.1" 200 OK
+{"error": "429 You exceeded your current quota, please check your plan and billing details. For more information on this error, head to: https://ai.google.dev/gemini-api/docs/rate-limits. To monitor your current usage, head to: https://ai.dev/rate-limit. \n* Quota exceeded for metric: generativelanguage.googleapis.com/generate_content_free_tier_requests, limit: 20, model: gemini-3-flash\nPlease retry in 57.612044358s. [links {\n  description: \"Learn more about Gemini API quotas\"\n  url: \"https://ai.google.dev/gemini-api/docs/rate-limits\"\n}\n, violations {\n  quota_metric: \"generativelanguage.googleapis.com/generate_content_free_tier_requests\"\n  quota_id: \"GenerateRequestsPerDayPerProjectPerModel-FreeTier\"\n  quota_dimensions {\n    key: \"model\"\n    value: \"gemini-3-flash\"\n  }\n  quota_dimensions {\n    key: \"location\"\n    value: \"global\"\n  }\n  quota_value: 20\n}\n, retry_delay {\n  seconds: 57\n}\n]", "event": "Gemini generation failed", "logger": "app.core.llm.gemini_client", "level": "error", "timestamp": "2026-03-02T22:23:02.335282Z"}
+{"agent": "due_diligence_agent", "error": "429 You exceeded your current quota, please check your plan and billing details. For more information on this error, head to: https://ai.google.dev/gemini-api/docs/rate-limits. To monitor your current usage, head to: https://ai.dev/rate-limit. \n* Quota exceeded for metric: generativelanguage.googleapis.com/generate_content_free_tier_requests, limit: 20, model: gemini-3-flash\nPlease retry in 57.612044358s. [links {\n  description: \"Learn more about Gemini API quotas\"\n  url: \"https://ai.google.dev/gemini-api/docs/rate-limits\"\n}\n, violations {\n  quota_metric: \"generativelanguage.googleapis.com/generate_content_free_tier_requests\"\n  quota_id: \"GenerateRequestsPerDayPerProjectPerModel-FreeTier\"\n  quota_dimensions {\n    key: \"model\"\n    value: \"gemini-3-flash\"\n  }\n  quota_dimensions {\n    key: \"location\"\n    value: \"global\"\n  }\n  quota_value: 20\n}\n, retry_delay {\n  seconds: 57\n}\n]", "event": "task_execution_error", "logger": "app.main", "level": "error", "timestamp": "2026-03-02T22:23:02.335467Z"}
+INFO:     172.22.0.1:44670 - "POST /api/v1/chat/execute-task HTTP/1.1" 200 OK
+INFO:     172.22.0.1:44670 - "POST /api/v1/agent-activity HTTP/1.1" 200 OK
+{"agent": "debate_moderator", "attempted": "lmstudio", "fallback": "gemini", "event": "Local LLM offline, falling back to cloud", "logger": "app.core.llm.model_router", "level": "warning", "timestamp": "2026-03-02T22:23:02.353520Z"}
+INFO:     172.22.0.1:33532 - "POST /api/v1/chat/execute-task HTTP/1.1" 200 OK
+INFO:     172.22.0.1:33532 - "POST /api/v1/agent-activity HTTP/1.1" 200 OK
+{"agent": "scoring_agent", "attempted": "lmstudio", "fallback": "gemini", "event": "Local LLM offline, falling back to cloud", "logger": "app.core.llm.model_router", "level": "warning", "timestamp": "2026-03-02T22:23:02.438476Z"}
+INFO:     172.22.0.1:44670 - "POST /api/v1/chat/execute-task HTTP/1.1" 200 OK
+INFO:     172.22.0.1:44670 - "POST /api/v1/agent-activity HTTP/1.1" 200 OK
+{"error": "429 You exceeded your current quota, please check your plan and billing details. For more information on this error, head to: https://ai.google.dev/gemini-api/docs/rate-limits. To monitor your current usage, head to: https://ai.dev/rate-limit. \n* Quota exceeded for metric: generativelanguage.googleapis.com/generate_content_free_tier_requests, limit: 20, model: gemini-3-flash\nPlease retry in 57.121321345s. [links {\n  description: \"Learn more about Gemini API quotas\"\n  url: \"https://ai.google.dev/gemini-api/docs/rate-limits\"\n}\n, violations {\n  quota_metric: \"generativelanguage.googleapis.com/generate_content_free_tier_requests\"\n  quota_id: \"GenerateRequestsPerDayPerProjectPerModel-FreeTier\"\n  quota_dimensions {\n    key: \"model\"\n    value: \"gemini-3-flash\"\n  }\n  quota_dimensions {\n    key: \"location\"\n    value: \"global\"\n  }\n  quota_value: 20\n}\n, retry_delay {\n  seconds: 57\n}\n]", "event": "Gemini generation failed", "logger": "app.core.llm.gemini_client", "level": "error", "timestamp": "2026-03-02T22:23:02.826828Z"}
+{"agent": "investment_memo_agent", "error": "429 You exceeded your current quota, please check your plan and billing details. For more information on this error, head to: https://ai.google.dev/gemini-api/docs/rate-limits. To monitor your current usage, head to: https://ai.dev/rate-limit. \n* Quota exceeded for metric: generativelanguage.googleapis.com/generate_content_free_tier_requests, limit: 20, model: gemini-3-flash\nPlease retry in 57.121321345s. [links {\n  description: \"Learn more about Gemini API quotas\"\n  url: \"https://ai.google.dev/gemini-api/docs/rate-limits\"\n}\n, violations {\n  quota_metric: \"generativelanguage.googleapis.com/generate_content_free_tier_requests\"\n  quota_id: \"GenerateRequestsPerDayPerProjectPerModel-FreeTier\"\n  quota_dimensions {\n    key: \"model\"\n    value: \"gemini-3-flash\"\n  }\n  quota_dimensions {\n    key: \"location\"\n    value: \"global\"\n  }\n  quota_value: 20\n}\n, retry_delay {\n  seconds: 57\n}\n]", "event": "task_execution_error", "logger": "app.main", "level": "error", "timestamp": "2026-03-02T22:23:02.827056Z"}
+INFO:     172.22.0.1:33532 - "POST /api/v1/chat/execute-task HTTP/1.1" 200 OK
+INFO:     172.22.0.1:33532 - "POST /api/v1/agent-activity HTTP/1.1" 200 OK
+INFO:     172.22.0.1:33532 - "GET /api/v1/dashboard/metrics HTTP/1.1" 200 OK
+INFO:     172.22.0.1:44674 - "GET /api/v1/dashboard/metrics HTTP/1.1" 200 OK
+INFO:     127.0.0.1:38382 - "GET /health HTTP/1.1" 200 OK
+INFO:     172.22.0.1:59158 - "GET /api/v1/dashboard/metrics HTTP/1.1" 200 OK
+INFO:     172.22.0.1:59168 - "GET /api/v1/dashboard/metrics HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57194 - "GET /health HTTP/1.1" 200 OK
+INFO:     172.22.0.1:51454 - "GET /api/v1/dashboard/metrics HTTP/1.1" 200 OK
+INFO:     172.22.0.1:33538 - "GET /api/v1/dashboard/metrics HTTP/1.1" 200 OK
+INFO:     127.0.0.1:47922 - "GET /health HTTP/1.1" 200 OK
+INFO:     172.22.0.1:45234 - "GET /api/v1/dashboard/metrics HTTP/1.1" 200 OK
+INFO:     172.22.0.1:45248 - "GET /api/v1/dashboard/metrics HTTP/1.1" 200 OK
+INFO:     127.0.0.1:45398 - "GET /health HTTP/1.1" 200 OK
+INFO:     172.22.0.1:44106 - "GET /api/v1/dashboard/metrics HTTP/1.1" 200 OK
+INFO:     172.22.0.1:54380 - "GET /api/v1/dashboard/metrics HTTP/1.1" 200 OK
+INFO:     127.0.0.1:52492 - "GET /health HTTP/1.1" 200 OK
+INFO:     172.22.0.1:33798 - "GET /api/v1/dashboard/metrics HTTP/1.1" 200 OK
+INFO:     172.22.0.1:33814 - "GET /api/v1/dashboard/metrics HTTP/1.1" 200 OK
+INFO:     127.0.0.1:48908 - "GET /health HTTP/1.1" 200 OK
+INFO:     172.22.0.1:35706 - "GET /api/v1/dashboard/metrics HTTP/1.1" 200 OK
+INFO:     172.22.0.1:44488 - "GET /api/v1/dashboard/metrics HTTP/1.1" 200 OK
+INFO:     127.0.0.1:47464 - "GET /health HTTP/1.1" 200 OK
+INFO:     172.22.0.1:37674 - "GET /api/v1/dashboard/metrics HTTP/1.1" 200 OK
+INFO:     172.22.0.1:37684 - "GET /api/v1/dashboard/metrics HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55414 - "GET /health HTTP/1.1" 200 OK
+INFO:     Shutting down
+INFO:     Waiting for application shutdown.
+INFO:     Application shutdown complete.
+INFO:     Finished server process [1]
+/app/app/core/llm/gemini_client.py:3: FutureWarning: 
+
+All support for the `google.generativeai` package has ended. It will no longer be receiving 
+updates or bug fixes. Please switch to the `google.genai` package as soon as possible.
+See README for more details:
+
+https://github.com/google-gemini/deprecated-generative-ai-python/blob/main/README.md
+
+  import google.generativeai as genai
+INFO:     Started server process [1]
+INFO:     Waiting for application startup.
+INFO:     Application startup complete.
+INFO:     Uvicorn running on http://0.0.0.0:8000 (Press CTRL+C to quit)
+INFO:     172.22.0.1:47618 - "GET /api/v1/dashboard/metrics HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55054 - "GET /health HTTP/1.1" 200 OK
+INFO:     172.22.0.1:43214 - "GET /api/v1/dashboard/metrics HTTP/1.1" 200 OK
+INFO:     172.22.0.1:43222 - "GET /api/v1/dashboard/metrics HTTP/1.1" 200 OK
+INFO:     127.0.0.1:40048 - "GET /health HTTP/1.1" 200 OK
+INFO:     172.22.0.1:40058 - "GET /api/v1/dashboard/metrics HTTP/1.1" 200 OK
+INFO:     172.22.0.1:37266 - "GET /api/v1/dashboard/metrics HTTP/1.1" 200 OK
+INFO:     127.0.0.1:42384 - "GET /health HTTP/1.1" 200 OK
+INFO:     172.22.0.1:38670 - "GET /api/v1/dashboard/metrics HTTP/1.1" 200 OK
+INFO:     172.22.0.1:38674 - "GET /api/v1/dashboard/metrics HTTP/1.1" 200 OK
+INFO:     127.0.0.1:40960 - "GET /health HTTP/1.1" 200 OK
+INFO:     172.22.0.1:59070 - "GET /api/v1/dashboard/metrics HTTP/1.1" 200 OK
+INFO:     172.22.0.1:52570 - "GET /api/v1/dashboard/metrics HTTP/1.1" 200 OK
+INFO:     127.0.0.1:53168 - "GET /health HTTP/1.1" 200 OK
+INFO:     172.22.0.1:41038 - "GET /api/v1/dashboard/metrics HTTP/1.1" 200 OK
+INFO:     172.22.0.1:41046 - "GET /api/v1/dashboard/metrics HTTP/1.1" 200 OK
+INFO:     127.0.0.1:43368 - "GET /health HTTP/1.1" 200 OK
+INFO:     172.22.0.1:34582 - "GET /api/v1/dashboard/metrics HTTP/1.1" 200 OK
+INFO:     172.22.0.1:48356 - "GET /api/v1/dashboard/metrics HTTP/1.1" 200 OK
+INFO:     127.0.0.1:59300 - "GET /health HTTP/1.1" 200 OK
+INFO:     172.22.0.1:38622 - "GET /api/v1/dashboard/metrics HTTP/1.1" 200 OK
+INFO:     172.22.0.1:38630 - "GET /api/v1/dashboard/metrics HTTP/1.1" 200 OK
+INFO:     172.22.0.1:38630 - "GET /api/v1/dashboard/metrics HTTP/1.1" 200 OK
+INFO:     172.22.0.1:52302 - "GET /api/v1/deals/all/tasks HTTP/1.1" 200 OK
+INFO:     172.22.0.1:52312 - "GET /api/v1/settings HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50450 - "GET /health HTTP/1.1" 200 OK
+INFO:     172.22.0.1:52322 - "GET /api/v1/models/available HTTP/1.1" 200 OK
+INFO:     172.22.0.1:52334 - "POST /api/v1/settings HTTP/1.1" 200 OK
+INFO:     172.22.0.1:52334 - "GET /api/v1/dashboard/metrics HTTP/1.1" 200 OK
+INFO:     172.22.0.1:37442 - "GET /api/v1/deals/all/tasks HTTP/1.1" 200 OK
+INFO:     172.22.0.1:37452 - "GET /api/v1/settings HTTP/1.1" 200 OK
+INFO:     172.22.0.1:37454 - "GET /api/v1/models/available HTTP/1.1" 200 OK
+INFO:     172.22.0.1:37454 - "GET /api/v1/dashboard/metrics HTTP/1.1" 200 OK
+INFO:     127.0.0.1:52236 - "GET /health HTTP/1.1" 200 OK
+INFO:     172.22.0.1:41360 - "GET /api/v1/dashboard/metrics HTTP/1.1" 200 OK
+INFO:     172.22.0.1:41360 - "GET /api/v1/dashboard/metrics HTTP/1.1" 200 OK
+INFO:     127.0.0.1:33976 - "GET /health HTTP/1.1" 200 OK
+INFO:     172.22.0.1:50920 - "GET /api/v1/dashboard/metrics HTTP/1.1" 200 OK
+INFO:     172.22.0.1:50936 - "GET /api/v1/deals/all/tasks HTTP/1.1" 200 OK
+INFO:     172.22.0.1:50946 - "GET /api/v1/settings HTTP/1.1" 200 OK
+INFO:     172.22.0.1:50962 - "GET /api/v1/models/available HTTP/1.1" 200 OK
+INFO:     172.22.0.1:58430 - "POST /api/v1/settings HTTP/1.1" 200 OK
+INFO:     127.0.0.1:45808 - "GET /health HTTP/1.1" 200 OK
+INFO:     172.22.0.1:45648 - "GET /api/v1/dashboard/metrics HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57600 - "GET /health HTTP/1.1" 200 OK
+INFO:     172.22.0.1:55198 - "POST /api/v1/deals HTTP/1.1" 200 OK
+{"error": "429 You exceeded your current quota, please check your plan and billing details. For more information on this error, head to: https://ai.google.dev/gemini-api/docs/rate-limits. To monitor your current usage, head to: https://ai.dev/rate-limit. \n* Quota exceeded for metric: generativelanguage.googleapis.com/generate_content_free_tier_requests, limit: 20, model: gemini-3-flash\nPlease retry in 58.216655795s. [links {\n  description: \"Learn more about Gemini API quotas\"\n  url: \"https://ai.google.dev/gemini-api/docs/rate-limits\"\n}\n, violations {\n  quota_metric: \"generativelanguage.googleapis.com/generate_content_free_tier_requests\"\n  quota_id: \"GenerateRequestsPerDayPerProjectPerModel-FreeTier\"\n  quota_dimensions {\n    key: \"model\"\n    value: \"gemini-3-flash\"\n  }\n  quota_dimensions {\n    key: \"location\"\n    value: \"global\"\n  }\n  quota_value: 20\n}\n, retry_delay {\n  seconds: 58\n}\n]", "event": "Gemini generation failed", "logger": "app.core.llm.gemini_client", "level": "error", "timestamp": "2026-03-02T22:28:01.735161Z"}
+{"agent": "project_manager", "error": "429 You exceeded your current quota, please check your plan and billing details. For more information on this error, head to: https://ai.google.dev/gemini-api/docs/rate-limits. To monitor your current usage, head to: https://ai.dev/rate-limit. \n* Quota exceeded for metric: generativelanguage.googleapis.com/generate_content_free_tier_requests, limit: 20, model: gemini-3-flash\nPlease retry in 58.216655795s. [links {\n  description: \"Learn more about Gemini API quotas\"\n  url: \"https://ai.google.dev/gemini-api/docs/rate-limits\"\n}\n, violations {\n  quota_metric: \"generativelanguage.googleapis.com/generate_content_free_tier_requests\"\n  quota_id: \"GenerateRequestsPerDayPerProjectPerModel-FreeTier\"\n  quota_dimensions {\n    key: \"model\"\n    value: \"gemini-3-flash\"\n  }\n  quota_dimensions {\n    key: \"location\"\n    value: \"global\"\n  }\n  quota_value: 20\n}\n, retry_delay {\n  seconds: 58\n}\n]", "event": "llm_task_generation_failed", "logger": "app.agents.project_manager", "level": "warning", "timestamp": "2026-03-02T22:28:01.735508Z"}
+INFO:     172.22.0.1:55198 - "POST /api/v1/chat/plan HTTP/1.1" 200 OK
+{"agent": "financial_analyst", "attempted": "lmstudio", "fallback": "gemini", "event": "Local LLM offline, falling back to cloud", "logger": "app.core.llm.model_router", "level": "warning", "timestamp": "2026-03-02T22:28:01.755943Z"}
+{"error": "429 You exceeded your current quota, please check your plan and billing details. For more information on this error, head to: https://ai.google.dev/gemini-api/docs/rate-limits. To monitor your current usage, head to: https://ai.dev/rate-limit. \n* Quota exceeded for metric: generativelanguage.googleapis.com/generate_content_free_tier_requests, limit: 20, model: gemini-3-flash\nPlease retry in 57.883172628s. [links {\n  description: \"Learn more about Gemini API quotas\"\n  url: \"https://ai.google.dev/gemini-api/docs/rate-limits\"\n}\n, violations {\n  quota_metric: \"generativelanguage.googleapis.com/generate_content_free_tier_requests\"\n  quota_id: \"GenerateRequestsPerDayPerProjectPerModel-FreeTier\"\n  quota_dimensions {\n    key: \"model\"\n    value: \"gemini-3-flash\"\n  }\n  quota_dimensions {\n    key: \"location\"\n    value: \"global\"\n  }\n  quota_value: 20\n}\n, retry_delay {\n  seconds: 57\n}\n]", "event": "Gemini generation failed", "logger": "app.core.llm.gemini_client", "level": "error", "timestamp": "2026-03-02T22:28:02.068630Z"}
+{"agent": "financial_analyst", "error": "429 You exceeded your current quota, please check your plan and billing details. For more information on this error, head to: https://ai.google.dev/gemini-api/docs/rate-limits. To monitor your current usage, head to: https://ai.dev/rate-limit. \n* Quota exceeded for metric: generativelanguage.googleapis.com/generate_content_free_tier_requests, limit: 20, model: gemini-3-flash\nPlease retry in 57.883172628s. [links {\n  description: \"Learn more about Gemini API quotas\"\n  url: \"https://ai.google.dev/gemini-api/docs/rate-limits\"\n}\n, violations {\n  quota_metric: \"generativelanguage.googleapis.com/generate_content_free_tier_requests\"\n  quota_id: \"GenerateRequestsPerDayPerProjectPerModel-FreeTier\"\n  quota_dimensions {\n    key: \"model\"\n    value: \"gemini-3-flash\"\n  }\n  quota_dimensions {\n    key: \"location\"\n    value: \"global\"\n  }\n  quota_value: 20\n}\n, retry_delay {\n  seconds: 57\n}\n]", "event": "task_execution_error", "logger": "app.main", "level": "error", "timestamp": "2026-03-02T22:28:02.068879Z"}
+INFO:     172.22.0.1:55198 - "POST /api/v1/chat/execute-task HTTP/1.1" 200 OK
+INFO:     172.22.0.1:55198 - "POST /api/v1/agent-activity HTTP/1.1" 200 OK
+{"agent": "market_researcher", "attempted": "lmstudio", "fallback": "gemini", "event": "Local LLM offline, falling back to cloud", "logger": "app.core.llm.model_router", "level": "warning", "timestamp": "2026-03-02T22:28:02.098613Z"}
+{"error": "429 You exceeded your current quota, please check your plan and billing details. For more information on this error, head to: https://ai.google.dev/gemini-api/docs/rate-limits. To monitor your current usage, head to: https://ai.dev/rate-limit. \n* Quota exceeded for metric: generativelanguage.googleapis.com/generate_content_free_tier_requests, limit: 20, model: gemini-3-flash\nPlease retry in 57.371925116s. [links {\n  description: \"Learn more about Gemini API quotas\"\n  url: \"https://ai.google.dev/gemini-api/docs/rate-limits\"\n}\n, violations {\n  quota_metric: \"generativelanguage.googleapis.com/generate_content_free_tier_requests\"\n  quota_id: \"GenerateRequestsPerDayPerProjectPerModel-FreeTier\"\n  quota_dimensions {\n    key: \"model\"\n    value: \"gemini-3-flash\"\n  }\n  quota_dimensions {\n    key: \"location\"\n    value: \"global\"\n  }\n  quota_value: 20\n}\n, retry_delay {\n  seconds: 57\n}\n]", "event": "Gemini generation failed", "logger": "app.core.llm.gemini_client", "level": "error", "timestamp": "2026-03-02T22:28:02.578004Z"}
+{"agent": "market_researcher", "error": "429 You exceeded your current quota, please check your plan and billing details. For more information on this error, head to: https://ai.google.dev/gemini-api/docs/rate-limits. To monitor your current usage, head to: https://ai.dev/rate-limit. \n* Quota exceeded for metric: generativelanguage.googleapis.com/generate_content_free_tier_requests, limit: 20, model: gemini-3-flash\nPlease retry in 57.371925116s. [links {\n  description: \"Learn more about Gemini API quotas\"\n  url: \"https://ai.google.dev/gemini-api/docs/rate-limits\"\n}\n, violations {\n  quota_metric: \"generativelanguage.googleapis.com/generate_content_free_tier_requests\"\n  quota_id: \"GenerateRequestsPerDayPerProjectPerModel-FreeTier\"\n  quota_dimensions {\n    key: \"model\"\n    value: \"gemini-3-flash\"\n  }\n  quota_dimensions {\n    key: \"location\"\n    value: \"global\"\n  }\n  quota_value: 20\n}\n, retry_delay {\n  seconds: 57\n}\n]", "event": "task_execution_error", "logger": "app.main", "level": "error", "timestamp": "2026-03-02T22:28:02.578192Z"}
+INFO:     172.22.0.1:55202 - "POST /api/v1/chat/execute-task HTTP/1.1" 200 OK
+INFO:     172.22.0.1:55202 - "POST /api/v1/agent-activity HTTP/1.1" 200 OK
+{"agent": "valuation_agent", "attempted": "lmstudio", "fallback": "gemini", "event": "Local LLM offline, falling back to cloud", "logger": "app.core.llm.model_router", "level": "warning", "timestamp": "2026-03-02T22:28:02.592811Z"}
+INFO:     172.22.0.1:55198 - "POST /api/v1/chat/execute-task HTTP/1.1" 200 OK
+INFO:     172.22.0.1:55198 - "POST /api/v1/agent-activity HTTP/1.1" 200 OK
+{"agent": "valuation_agent", "attempted": "lmstudio", "fallback": "gemini", "event": "Local LLM offline, falling back to cloud", "logger": "app.core.llm.model_router", "level": "warning", "timestamp": "2026-03-02T22:28:02.613636Z"}
+INFO:     172.22.0.1:55202 - "POST /api/v1/chat/execute-task HTTP/1.1" 200 OK
+INFO:     172.22.0.1:55202 - "POST /api/v1/agent-activity HTTP/1.1" 200 OK
+{"error": "429 You exceeded your current quota, please check your plan and billing details. For more information on this error, head to: https://ai.google.dev/gemini-api/docs/rate-limits. To monitor your current usage, head to: https://ai.dev/rate-limit. \n* Quota exceeded for metric: generativelanguage.googleapis.com/generate_content_free_tier_requests, limit: 20, model: gemini-3-flash\nPlease retry in 57.184988792s. [links {\n  description: \"Learn more about Gemini API quotas\"\n  url: \"https://ai.google.dev/gemini-api/docs/rate-limits\"\n}\n, violations {\n  quota_metric: \"generativelanguage.googleapis.com/generate_content_free_tier_requests\"\n  quota_id: \"GenerateRequestsPerDayPerProjectPerModel-FreeTier\"\n  quota_dimensions {\n    key: \"model\"\n    value: \"gemini-3-flash\"\n  }\n  quota_dimensions {\n    key: \"location\"\n    value: \"global\"\n  }\n  quota_value: 20\n}\n, retry_delay {\n  seconds: 57\n}\n]", "event": "Gemini generation failed", "logger": "app.core.llm.gemini_client", "level": "error", "timestamp": "2026-03-02T22:28:02.765142Z"}
+{"agent": "dcf_lbo_architect", "error": "429 You exceeded your current quota, please check your plan and billing details. For more information on this error, head to: https://ai.google.dev/gemini-api/docs/rate-limits. To monitor your current usage, head to: https://ai.dev/rate-limit. \n* Quota exceeded for metric: generativelanguage.googleapis.com/generate_content_free_tier_requests, limit: 20, model: gemini-3-flash\nPlease retry in 57.184988792s. [links {\n  description: \"Learn more about Gemini API quotas\"\n  url: \"https://ai.google.dev/gemini-api/docs/rate-limits\"\n}\n, violations {\n  quota_metric: \"generativelanguage.googleapis.com/generate_content_free_tier_requests\"\n  quota_id: \"GenerateRequestsPerDayPerProjectPerModel-FreeTier\"\n  quota_dimensions {\n    key: \"model\"\n    value: \"gemini-3-flash\"\n  }\n  quota_dimensions {\n    key: \"location\"\n    value: \"global\"\n  }\n  quota_value: 20\n}\n, retry_delay {\n  seconds: 57\n}\n]", "event": "task_execution_error", "logger": "app.main", "level": "error", "timestamp": "2026-03-02T22:28:02.765385Z"}
+INFO:     172.22.0.1:55198 - "POST /api/v1/chat/execute-task HTTP/1.1" 200 OK
+INFO:     172.22.0.1:55198 - "POST /api/v1/agent-activity HTTP/1.1" 200 OK
+{"agent": "risk_assessor", "attempted": "lmstudio", "fallback": "gemini", "event": "Local LLM offline, falling back to cloud", "logger": "app.core.llm.model_router", "level": "warning", "timestamp": "2026-03-02T22:28:02.785572Z"}
+{"error": "429 You exceeded your current quota, please check your plan and billing details. For more information on this error, head to: https://ai.google.dev/gemini-api/docs/rate-limits. To monitor your current usage, head to: https://ai.dev/rate-limit. \n* Quota exceeded for metric: generativelanguage.googleapis.com/generate_content_free_tier_requests, limit: 20, model: gemini-3-flash\nPlease retry in 57.022426228s. [links {\n  description: \"Learn more about Gemini API quotas\"\n  url: \"https://ai.google.dev/gemini-api/docs/rate-limits\"\n}\n, violations {\n  quota_metric: \"generativelanguage.googleapis.com/generate_content_free_tier_requests\"\n  quota_id: \"GenerateRequestsPerDayPerProjectPerModel-FreeTier\"\n  quota_dimensions {\n    key: \"model\"\n    value: \"gemini-3-flash\"\n  }\n  quota_dimensions {\n    key: \"location\"\n    value: \"global\"\n  }\n  quota_value: 20\n}\n, retry_delay {\n  seconds: 57\n}\n]", "event": "Gemini generation failed", "logger": "app.core.llm.gemini_client", "level": "error", "timestamp": "2026-03-02T22:28:02.927058Z"}
+{"agent": "risk_assessor", "error": "429 You exceeded your current quota, please check your plan and billing details. For more information on this error, head to: https://ai.google.dev/gemini-api/docs/rate-limits. To monitor your current usage, head to: https://ai.dev/rate-limit. \n* Quota exceeded for metric: generativelanguage.googleapis.com/generate_content_free_tier_requests, limit: 20, model: gemini-3-flash\nPlease retry in 57.022426228s. [links {\n  description: \"Learn more about Gemini API quotas\"\n  url: \"https://ai.google.dev/gemini-api/docs/rate-limits\"\n}\n, violations {\n  quota_metric: \"generativelanguage.googleapis.com/generate_content_free_tier_requests\"\n  quota_id: \"GenerateRequestsPerDayPerProjectPerModel-FreeTier\"\n  quota_dimensions {\n    key: \"model\"\n    value: \"gemini-3-flash\"\n  }\n  quota_dimensions {\n    key: \"location\"\n    value: \"global\"\n  }\n  quota_value: 20\n}\n, retry_delay {\n  seconds: 57\n}\n]", "event": "task_execution_error", "logger": "app.main", "level": "error", "timestamp": "2026-03-02T22:28:02.927253Z"}
+INFO:     172.22.0.1:55202 - "POST /api/v1/chat/execute-task HTTP/1.1" 200 OK
+INFO:     172.22.0.1:55202 - "POST /api/v1/agent-activity HTTP/1.1" 200 OK
+{"agent": "legal_advisor", "attempted": "lmstudio", "fallback": "gemini", "event": "Local LLM offline, falling back to cloud", "logger": "app.core.llm.model_router", "level": "warning", "timestamp": "2026-03-02T22:28:02.942427Z"}
+{"error": "429 You exceeded your current quota, please check your plan and billing details. For more information on this error, head to: https://ai.google.dev/gemini-api/docs/rate-limits. To monitor your current usage, head to: https://ai.dev/rate-limit. \n* Quota exceeded for metric: generativelanguage.googleapis.com/generate_content_free_tier_requests, limit: 20, model: gemini-3-flash\nPlease retry in 56.700732716s. [links {\n  description: \"Learn more about Gemini API quotas\"\n  url: \"https://ai.google.dev/gemini-api/docs/rate-limits\"\n}\n, violations {\n  quota_metric: \"generativelanguage.googleapis.com/generate_content_free_tier_requests\"\n  quota_id: \"GenerateRequestsPerDayPerProjectPerModel-FreeTier\"\n  quota_dimensions {\n    key: \"model\"\n    value: \"gemini-3-flash\"\n  }\n  quota_dimensions {\n    key: \"location\"\n    value: \"global\"\n  }\n  quota_value: 20\n}\n, retry_delay {\n  seconds: 56\n}\n]", "event": "Gemini generation failed", "logger": "app.core.llm.gemini_client", "level": "error", "timestamp": "2026-03-02T22:28:03.248534Z"}
+{"agent": "legal_advisor", "error": "429 You exceeded your current quota, please check your plan and billing details. For more information on this error, head to: https://ai.google.dev/gemini-api/docs/rate-limits. To monitor your current usage, head to: https://ai.dev/rate-limit. \n* Quota exceeded for metric: generativelanguage.googleapis.com/generate_content_free_tier_requests, limit: 20, model: gemini-3-flash\nPlease retry in 56.700732716s. [links {\n  description: \"Learn more about Gemini API quotas\"\n  url: \"https://ai.google.dev/gemini-api/docs/rate-limits\"\n}\n, violations {\n  quota_metric: \"generativelanguage.googleapis.com/generate_content_free_tier_requests\"\n  quota_id: \"GenerateRequestsPerDayPerProjectPerModel-FreeTier\"\n  quota_dimensions {\n    key: \"model\"\n    value: \"gemini-3-flash\"\n  }\n  quota_dimensions {\n    key: \"location\"\n    value: \"global\"\n  }\n  quota_value: 20\n}\n, retry_delay {\n  seconds: 56\n}\n]", "event": "task_execution_error", "logger": "app.main", "level": "error", "timestamp": "2026-03-02T22:28:03.248716Z"}
+INFO:     172.22.0.1:55198 - "POST /api/v1/chat/execute-task HTTP/1.1" 200 OK
+INFO:     172.22.0.1:55198 - "POST /api/v1/agent-activity HTTP/1.1" 200 OK
+{"error": "429 You exceeded your current quota, please check your plan and billing details. For more information on this error, head to: https://ai.google.dev/gemini-api/docs/rate-limits. To monitor your current usage, head to: https://ai.dev/rate-limit. \n* Quota exceeded for metric: generativelanguage.googleapis.com/generate_content_free_tier_requests, limit: 20, model: gemini-3-flash\nPlease retry in 56.391146742s. [links {\n  description: \"Learn more about Gemini API quotas\"\n  url: \"https://ai.google.dev/gemini-api/docs/rate-limits\"\n}\n, violations {\n  quota_metric: \"generativelanguage.googleapis.com/generate_content_free_tier_requests\"\n  quota_id: \"GenerateRequestsPerDayPerProjectPerModel-FreeTier\"\n  quota_dimensions {\n    key: \"model\"\n    value: \"gemini-3-flash\"\n  }\n  quota_dimensions {\n    key: \"location\"\n    value: \"global\"\n  }\n  quota_value: 20\n}\n, retry_delay {\n  seconds: 56\n}\n]", "event": "Gemini generation failed", "logger": "app.core.llm.gemini_client", "level": "error", "timestamp": "2026-03-02T22:28:03.557988Z"}
+{"agent": "due_diligence_agent", "error": "429 You exceeded your current quota, please check your plan and billing details. For more information on this error, head to: https://ai.google.dev/gemini-api/docs/rate-limits. To monitor your current usage, head to: https://ai.dev/rate-limit. \n* Quota exceeded for metric: generativelanguage.googleapis.com/generate_content_free_tier_requests, limit: 20, model: gemini-3-flash\nPlease retry in 56.391146742s. [links {\n  description: \"Learn more about Gemini API quotas\"\n  url: \"https://ai.google.dev/gemini-api/docs/rate-limits\"\n}\n, violations {\n  quota_metric: \"generativelanguage.googleapis.com/generate_content_free_tier_requests\"\n  quota_id: \"GenerateRequestsPerDayPerProjectPerModel-FreeTier\"\n  quota_dimensions {\n    key: \"model\"\n    value: \"gemini-3-flash\"\n  }\n  quota_dimensions {\n    key: \"location\"\n    value: \"global\"\n  }\n  quota_value: 20\n}\n, retry_delay {\n  seconds: 56\n}\n]", "event": "task_execution_error", "logger": "app.main", "level": "error", "timestamp": "2026-03-02T22:28:03.558178Z"}
+INFO:     172.22.0.1:55202 - "POST /api/v1/chat/execute-task HTTP/1.1" 200 OK
+INFO:     172.22.0.1:55202 - "POST /api/v1/agent-activity HTTP/1.1" 200 OK
+{"agent": "debate_moderator", "attempted": "lmstudio", "fallback": "gemini", "event": "Local LLM offline, falling back to cloud", "logger": "app.core.llm.model_router", "level": "warning", "timestamp": "2026-03-02T22:28:03.575132Z"}
+INFO:     172.22.0.1:55198 - "POST /api/v1/chat/execute-task HTTP/1.1" 200 OK
+INFO:     172.22.0.1:55198 - "POST /api/v1/agent-activity HTTP/1.1" 200 OK
+{"agent": "scoring_agent", "attempted": "lmstudio", "fallback": "gemini", "event": "Local LLM offline, falling back to cloud", "logger": "app.core.llm.model_router", "level": "warning", "timestamp": "2026-03-02T22:28:03.604604Z"}
+INFO:     172.22.0.1:55202 - "POST /api/v1/chat/execute-task HTTP/1.1" 200 OK
+INFO:     172.22.0.1:55202 - "POST /api/v1/agent-activity HTTP/1.1" 200 OK
+{"error": "429 You exceeded your current quota, please check your plan and billing details. For more information on this error, head to: https://ai.google.dev/gemini-api/docs/rate-limits. To monitor your current usage, head to: https://ai.dev/rate-limit. \n* Quota exceeded for metric: generativelanguage.googleapis.com/generate_content_free_tier_requests, limit: 20, model: gemini-3-flash\nPlease retry in 56.009269582s. [links {\n  description: \"Learn more about Gemini API quotas\"\n  url: \"https://ai.google.dev/gemini-api/docs/rate-limits\"\n}\n, violations {\n  quota_metric: \"generativelanguage.googleapis.com/generate_content_free_tier_requests\"\n  quota_id: \"GenerateRequestsPerDayPerProjectPerModel-FreeTier\"\n  quota_dimensions {\n    key: \"model\"\n    value: \"gemini-3-flash\"\n  }\n  quota_dimensions {\n    key: \"location\"\n    value: \"global\"\n  }\n  quota_value: 20\n}\n, retry_delay {\n  seconds: 56\n}\n]", "event": "Gemini generation failed", "logger": "app.core.llm.gemini_client", "level": "error", "timestamp": "2026-03-02T22:28:03.941123Z"}
+{"agent": "investment_memo_agent", "error": "429 You exceeded your current quota, please check your plan and billing details. For more information on this error, head to: https://ai.google.dev/gemini-api/docs/rate-limits. To monitor your current usage, head to: https://ai.dev/rate-limit. \n* Quota exceeded for metric: generativelanguage.googleapis.com/generate_content_free_tier_requests, limit: 20, model: gemini-3-flash\nPlease retry in 56.009269582s. [links {\n  description: \"Learn more about Gemini API quotas\"\n  url: \"https://ai.google.dev/gemini-api/docs/rate-limits\"\n}\n, violations {\n  quota_metric: \"generativelanguage.googleapis.com/generate_content_free_tier_requests\"\n  quota_id: \"GenerateRequestsPerDayPerProjectPerModel-FreeTier\"\n  quota_dimensions {\n    key: \"model\"\n    value: \"gemini-3-flash\"\n  }\n  quota_dimensions {\n    key: \"location\"\n    value: \"global\"\n  }\n  quota_value: 20\n}\n, retry_delay {\n  seconds: 56\n}\n]", "event": "task_execution_error", "logger": "app.main", "level": "error", "timestamp": "2026-03-02T22:28:03.941334Z"}
+INFO:     172.22.0.1:55198 - "POST /api/v1/chat/execute-task HTTP/1.1" 200 OK
+INFO:     172.22.0.1:55198 - "POST /api/v1/agent-activity HTTP/1.1" 200 OK
+INFO:     172.22.0.1:55198 - "GET /api/v1/dashboard/metrics HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50184 - "GET /health HTTP/1.1" 200 OK
+INFO:     172.22.0.1:57090 - "GET /api/v1/dashboard/metrics HTTP/1.1" 200 OK
+INFO:     127.0.0.1:51016 - "GET /health HTTP/1.1" 200 OK
+INFO:     172.22.0.1:33982 - "GET /api/v1/dashboard/metrics HTTP/1.1" 200 OK
+INFO:     127.0.0.1:48302 - "GET /health HTTP/1.1" 200 OK
+INFO:     172.22.0.1:55326 - "GET /api/v1/dashboard/metrics HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55318 - "GET /health HTTP/1.1" 200 OK
+INFO:     172.22.0.1:56514 - "GET /api/v1/dashboard/metrics HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49896 - "GET /health HTTP/1.1" 200 OK
+INFO:     172.22.0.1:34946 - "GET /api/v1/dashboard/metrics HTTP/1.1" 200 OK
+INFO:     127.0.0.1:59248 - "GET /health HTTP/1.1" 200 OK
+INFO:     172.22.0.1:44118 - "GET /api/v1/dashboard/metrics HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57010 - "GET /health HTTP/1.1" 200 OK
+INFO:     172.22.0.1:56038 - "GET /api/v1/dashboard/metrics HTTP/1.1" 200 OK
+INFO:     127.0.0.1:48834 - "GET /health HTTP/1.1" 200 OK
+INFO:     172.22.0.1:34446 - "GET /api/v1/dashboard/metrics HTTP/1.1" 200 OK
+INFO:     127.0.0.1:32870 - "GET /health HTTP/1.1" 200 OK
+INFO:     172.22.0.1:35210 - "GET /api/v1/dashboard/metrics HTTP/1.1" 200 OK
+INFO:     127.0.0.1:34864 - "GET /health HTTP/1.1" 200 OK
+INFO:     172.22.0.1:37500 - "GET /api/v1/dashboard/metrics HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54418 - "GET /health HTTP/1.1" 200 OK
+INFO:     172.22.0.1:52006 - "GET /api/v1/dashboard/metrics HTTP/1.1" 200 OK
+INFO:     127.0.0.1:46506 - "GET /health HTTP/1.1" 200 OK
+INFO:     172.22.0.1:53432 - "GET /api/v1/dashboard/metrics HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55728 - "GET /health HTTP/1.1" 200 OK
+INFO:     172.22.0.1:49702 - "GET /api/v1/dashboard/metrics HTTP/1.1" 200 OK
+INFO:     127.0.0.1:39704 - "GET /health HTTP/1.1" 200 OK
+INFO:     172.22.0.1:46580 - "GET /api/v1/dashboard/metrics HTTP/1.1" 200 OK
+INFO:     127.0.0.1:35328 - "GET /health HTTP/1.1" 200 OK
+INFO:     172.22.0.1:42310 - "GET /api/v1/dashboard/metrics HTTP/1.1" 200 OK
+INFO:     127.0.0.1:33894 - "GET /health HTTP/1.1" 200 OK
+INFO:     172.22.0.1:57554 - "GET /api/v1/dashboard/metrics HTTP/1.1" 200 OK
+INFO:     127.0.0.1:52794 - "GET /health HTTP/1.1" 200 OK
+INFO:     172.22.0.1:33020 - "GET /api/v1/dashboard/metrics HTTP/1.1" 200 OK
+INFO:     127.0.0.1:37694 - "GET /health HTTP/1.1" 200 OK
+INFO:     172.22.0.1:59028 - "GET /api/v1/dashboard/metrics HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49362 - "GET /health HTTP/1.1" 200 OK
+INFO:     172.22.0.1:58274 - "GET /api/v1/dashboard/metrics HTTP/1.1" 200 OK
+INFO:     127.0.0.1:33124 - "GET /health HTTP/1.1" 200 OK
+INFO:     172.22.0.1:53780 - "GET /api/v1/dashboard/metrics HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58772 - "GET /health HTTP/1.1" 200 OK
+INFO:     172.22.0.1:38866 - "GET /api/v1/dashboard/metrics HTTP/1.1" 200 OK
+INFO:     127.0.0.1:47922 - "GET /health HTTP/1.1" 200 OK
+INFO:     172.22.0.1:37568 - "GET /api/v1/dashboard/metrics HTTP/1.1" 200 OK
+INFO:     127.0.0.1:51670 - "GET /health HTTP/1.1" 200 OK
+INFO:     172.22.0.1:43566 - "GET /api/v1/dashboard/metrics HTTP/1.1" 200 OK
+INFO:     127.0.0.1:36120 - "GET /health HTTP/1.1" 200 OK
+INFO:     172.22.0.1:41668 - "GET /api/v1/dashboard/metrics HTTP/1.1" 200 OK
+INFO:     127.0.0.1:43544 - "GET /health HTTP/1.1" 200 OK
+INFO:     172.22.0.1:35274 - "GET /api/v1/dashboard/metrics HTTP/1.1" 200 OK
+INFO:     127.0.0.1:42660 - "GET /health HTTP/1.1" 200 OK
+INFO:     172.22.0.1:36850 - "GET /api/v1/dashboard/metrics HTTP/1.1" 200 OK
+INFO:     127.0.0.1:36496 - "GET /health HTTP/1.1" 200 OK
+INFO:     172.22.0.1:56286 - "GET /api/v1/dashboard/metrics HTTP/1.1" 200 OK
