@@ -1,0 +1,38 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+venv/
+ENV/
+env/
+.env
+
+# Node
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.next/
+out/
+build/
+dist/
+
+# Finance / Data
+ofas_outputs/
+*.xlsx
+*.pdf
+*.json
+!package.json
+!tsconfig.json
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Project Specific
+temp_anthropic_plugins/
+temp_diff.txt
+.gemini/
