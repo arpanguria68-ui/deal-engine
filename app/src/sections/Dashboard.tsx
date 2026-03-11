@@ -9,10 +9,10 @@ import {
     Target, TrendingUp, DollarSign, Briefcase, RefreshCw,
     CheckCircle, Clock, Zap, X, Building2, Calendar,
     Cpu, Cloud, LayoutDashboard, ArrowLeft,
-    Download, FileSpreadsheet, Presentation
+    Download, FileSpreadsheet, Presentation, Archive, Loader2
 } from 'lucide-react';
 
-const API_BASE = 'http://localhost:8000';
+const API_BASE = 'http://localhost:8005';
 
 interface DealRecord {
     id: string;
@@ -103,33 +103,89 @@ function DealDetailPanel({
     onClose: () => void;
     onNavigate?: (page: 'chat' | 'dashboard' | 'settings') => void;
 }) {
+    const [isGenerating, setIsGenerating] = useState(false);
+    const [manifest, setManifest] = useState<any[]>([]);
+
+    const fetchManifest = useCallback(async () => {
+        try {
+            const res = await fetch(`${API_BASE}/api/v1/deals/${deal.id}/documents`);
+            if (res.ok) {
+                const data = await res.json();
+                setManifest(data.documents || []);
+            }
+        } catch (err) {
+            console.error('Error fetching document manifest:', err);
+        }
+    }, [deal.id]);
+
+    useEffect(() => {
+        fetchManifest();
+    }, [fetchManifest]);
+
+    const handleGenerate = async () => {
+        setIsGenerating(true);
+        try {
+            const res = await fetch(`${API_BASE}/api/v1/deals/${deal.id}/documents/generate`, { method: 'POST' });
+            if (!res.ok) throw new Error('Generation failed');
+            await fetchManifest();
+        } catch (err) {
+            console.error('Error generating reports:', err);
+        } finally {
+            setIsGenerating(false);
+        }
+    };
+
     const handleDownload = async (format: 'pdf' | 'pptx' | 'xlsx') => {
         try {
-            const res = await fetch(`${API_BASE}/api/v1/deals/${deal.id}/report?format=${format}`);
-            if (!res.ok) throw new Error('Download failed');
-
-            const blob = await res.blob();
-            const disposition = res.headers.get('Content-Disposition');
-            let filename = `DealForge_${deal.target_company.replace(/[^A-Za-z0-9]/g, '_')}_Report.${format}`;
-
-            if (disposition && disposition.includes('filename=')) {
-                const match = disposition.match(/filename="?([^"]+)"?/);
-                if (match && match[1]) {
-                    filename = match[1];
-                }
+            // Hit the new download endpoint
+            const res = await fetch(`${API_BASE}/api/v1/deals/${deal.id}/documents/${format}`);
+            
+            // Fallback to old endpoint if 404 (optional, but new system is better)
+            if (res.status === 404) {
+                console.warn(`Document ${format} not found in cache, falling back to legacy generator...`);
+                const legacyRes = await fetch(`${API_BASE}/api/v1/deals/${deal.id}/report?format=${format}`);
+                if (!legacyRes.ok) throw new Error('Download failed');
+                await processDownloadResponse(legacyRes, format);
+            } else if (res.ok) {
+                await processDownloadResponse(res, format);
+            } else {
+                throw new Error('Download failed');
             }
-
-            const url = window.URL.createObjectURL(blob);
-            const a = document.createElement('a');
-            a.href = url;
-            a.download = filename;
-            document.body.appendChild(a);
-            a.click();
-            window.URL.revokeObjectURL(url);
-            document.body.removeChild(a);
         } catch (err) {
             console.error('Error downloading report:', err);
         }
+    };
+
+    const handleDownloadBundle = async () => {
+        try {
+            const res = await fetch(`${API_BASE}/api/v1/deals/${deal.id}/documents/bundle`);
+            if (!res.ok) throw new Error('Bundle download failed');
+            await processDownloadResponse(res, 'zip');
+        } catch (err) {
+            console.error('Error downloading bundle:', err);
+        }
+    };
+
+    const processDownloadResponse = async (res: Response, ext: string) => {
+        const blob = await res.blob();
+        let filename = `DealForge_${deal.target_company.replace(/[^A-Za-z0-9]/g, '_')}.${ext}`;
+        const disposition = res.headers.get('Content-Disposition');
+        if (disposition) {
+            const match = disposition.match(/filename="?([^";\n]+)"?/);
+            if (match?.[1]) filename = match[1];
+        }
+
+        const url = window.URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.style.display = 'none';
+        a.href = url;
+        a.download = filename;
+        document.body.appendChild(a);
+        a.click();
+        setTimeout(() => {
+            window.URL.revokeObjectURL(url);
+            document.body.removeChild(a);
+        }, 200);
     };
 
     const scorePercent = deal.final_score !== null ? Math.round(deal.final_score * 100) : null;
@@ -297,38 +353,97 @@ function DealDetailPanel({
                     </div>
                 </ScrollArea>
 
-                {/* Report Download Buttons */}
-                <div className="border-t p-4 space-y-3">
-                    <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Download Report</p>
-                    <div className="grid grid-cols-3 gap-2">
-                        <Button
-                            variant="outline"
-                            size="sm"
-                            className="gap-1.5"
-                            onClick={() => handleDownload('pdf')}
-                        >
-                            <Download className="h-3.5 w-3.5" /> PDF
-                        </Button>
-                        <Button
-                            variant="outline"
-                            size="sm"
-                            className="gap-1.5"
-                            onClick={() => handleDownload('pptx')}
-                        >
-                            <Presentation className="h-3.5 w-3.5" /> PPTX
-                        </Button>
-                        <Button
-                            variant="outline"
-                            size="sm"
-                            className="gap-1.5"
-                            onClick={() => handleDownload('xlsx')}
-                        >
-                            <FileSpreadsheet className="h-3.5 w-3.5" /> Excel
-                        </Button>
+                {/* Report Download Hub */}
+                <div className="border-t p-6 space-y-4 bg-muted/20">
+                    <div className="flex items-center justify-between">
+                        <div className="space-y-0.5">
+                            <h4 className="text-sm font-bold flex items-center gap-2">
+                                <FileText className="h-4 w-4 text-primary" /> Reports Hub
+                            </h4>
+                            <p className="text-[10px] text-muted-foreground uppercase tracking-widest font-semibold">
+                                Production-Ready Deliverables
+                            </p>
+                        </div>
+                        {manifest.length > 0 && (
+                            <Button 
+                                variant="ghost" 
+                                size="sm" 
+                                className="h-7 text-xs gap-1.5 text-primary hover:text-primary hover:bg-primary/10"
+                                onClick={handleGenerate}
+                                disabled={isGenerating}
+                            >
+                                <RefreshCw className={`h-3 w-3 ${isGenerating ? 'animate-spin' : ''}`} />
+                                Regenerate
+                            </Button>
+                        )}
                     </div>
-                    <div className="flex gap-2 pt-1">
+
+                    {manifest.length === 0 ? (
+                        <div className="rounded-xl border border-dashed p-6 text-center space-y-3 bg-background/50">
+                            <div className="mx-auto w-10 h-10 rounded-full bg-primary/10 flex items-center justify-center">
+                                <Zap className="h-5 w-5 text-primary" />
+                            </div>
+                            <div className="space-y-1">
+                                <p className="text-sm font-medium">No reports generated yet</p>
+                                <p className="text-xs text-muted-foreground max-w-[200px] mx-auto">
+                                    Generate all McKinsey-style PPTX, Excel, and PDF deliverables at once.
+                                </p>
+                            </div>
+                            <Button 
+                                size="sm" 
+                                className="w-full gap-2 shadow-lg shadow-primary/20"
+                                onClick={handleGenerate}
+                                disabled={isGenerating || deal.status !== 'completed' && deal.status !== 'ready'}
+                            >
+                                {isGenerating ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
+                                {isGenerating ? 'Generating Artifacts...' : 'Generate All Reports'}
+                            </Button>
+                        </div>
+                    ) : (
+                        <div className="space-y-3">
+                            <div className="grid grid-cols-1 gap-2">
+                                {manifest.map((doc, idx) => (
+                                    <div key={idx} className="flex items-center justify-between rounded-lg border bg-background p-3 hover:border-primary/50 transition-all group">
+                                        <div className="flex items-center gap-3">
+                                            <div className="rounded-md p-2 bg-muted group-hover:bg-primary/10 transition-colors">
+                                                {doc.format === 'pdf' ? <FileText className="h-4 w-4 text-red-500" /> :
+                                                 doc.format === 'pptx' ? <Presentation className="h-4 w-4 text-orange-500" /> :
+                                                 <FileSpreadsheet className="h-4 w-4 text-green-600" />}
+                                            </div>
+                                            <div>
+                                                <p className="text-sm font-semibold uppercase">{doc.format}</p>
+                                                <p className="text-[10px] text-muted-foreground">
+                                                    {doc.size_human} · Generated {timeAgo(doc.generated_at)}
+                                                </p>
+                                            </div>
+                                        </div>
+                                        <Button 
+                                            variant="ghost" 
+                                            size="icon" 
+                                            className="h-8 w-8 hover:bg-primary hover:text-white transition-colors"
+                                            onClick={() => handleDownload(doc.format)}
+                                        >
+                                            <Download className="h-4 w-4" />
+                                        </Button>
+                                    </div>
+                                ))}
+                            </div>
+                            
+                            <Button 
+                                variant="outline" 
+                                size="sm" 
+                                className="w-full gap-2 border-primary/20 hover:border-primary/50 hover:bg-primary/5"
+                                onClick={handleDownloadBundle}
+                            >
+                                <Archive className="h-4 w-4 text-primary" />
+                                Download Full Artifact Zip
+                            </Button>
+                        </div>
+                    )}
+                    
+                    <div className="flex gap-2 pt-2">
                         <Button
-                            className="flex-1"
+                            className="flex-1 shadow-md"
                             onClick={() => { onClose(); onNavigate?.('chat'); }}
                         >
                             <LayoutDashboard className="mr-2 h-4 w-4" />
@@ -503,14 +618,25 @@ export function Dashboard({ onNavigate }: { onNavigate?: (page: 'chat' | 'dashbo
                                     {[...metrics.deals].reverse().map((deal) => (
                                         <div key={deal.id} className="flex flex-col space-y-2 rounded-lg border p-4 hover:border-primary/50 transition-colors group">
                                             <div className="flex items-center justify-between">
-                                                <div className="flex items-center space-x-2">
-                                                    <h3 className="font-semibold">{deal.name}</h3>
-                                                    {getDealBadge(deal)}
+                                                <div className="flex flex-col space-y-1">
+                                                    <div className="flex items-center space-x-2">
+                                                        <h3 className="font-semibold">{deal.name}</h3>
+                                                        {getDealBadge(deal)}
+                                                    </div>
+                                                    <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                                                        <span>Started: {formatDate(deal.created_at)}</span>
+                                                        <span>·</span>
+                                                        <span className="font-mono bg-muted px-1.5 py-0.5 rounded text-[10px] select-all">
+                                                            ID: {deal.id.substring(0, 8)}
+                                                        </span>
+                                                    </div>
                                                 </div>
-                                                <span className="text-xs text-muted-foreground">{timeAgo(deal.updated_at)}</span>
+                                                <div className="flex flex-col items-end text-xs text-muted-foreground">
+                                                    <span>Updated: {timeAgo(deal.updated_at)}</span>
+                                                </div>
                                             </div>
 
-                                            <div className="flex items-center justify-between text-sm text-muted-foreground">
+                                            <div className="flex items-center justify-between text-sm text-muted-foreground mt-2">
                                                 <div className="flex items-center space-x-1">
                                                     <Activity className="h-3 w-3" />
                                                     <span>Stage: {deal.current_stage}</span>
