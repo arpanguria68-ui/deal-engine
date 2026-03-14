@@ -22,7 +22,10 @@ COPY app/ ./app/
 # Set environment variables
 ENV PYTHONPATH=/app
 ENV PYTHONUNBUFFERED=1
-ENV DATABASE_URL=sqlite+aiosqlite:///./dealforge.db
+ENV RUNNING_IN_DOCKER=1
+ENV DATABASE_URL=sqlite+aiosqlite:///./data/dealforge.db
+ENV DATA_DIR=data
+ENV REPORTS_DIR=reports
 ENV DEBUG=true
 ENV DEFAULT_LLM_PROVIDER=gemini
 ENV PAGEINDEX_MODE=local

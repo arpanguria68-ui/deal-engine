@@ -146,7 +146,7 @@ class FetchFinancialStatementsTool(BaseTool):
             "required": ["ticker"],
         }
 
-    def execute(
+    async def execute(
         self,
         ticker: str = "",
         statements: Optional[List[str]] = None,
@@ -154,7 +154,11 @@ class FetchFinancialStatementsTool(BaseTool):
         frequency: str = "annual",
         **kwargs,
     ) -> ToolResult:
-        """Fetch financial statements — try SEC EDGAR first, then Yahoo Finance"""
+        """Fetch financial statements — try SEC EDGAR first, then Yahoo Finance.
+
+        Now async (matching BaseTool contract). Blocking I/O is delegated to a thread.
+        """
+        import asyncio
 
         statements = statements or ["income", "balance", "cashflow"]
         ticker = ticker.upper().strip()
@@ -166,8 +170,10 @@ class FetchFinancialStatementsTool(BaseTool):
                 error="Ticker symbol is required",
             )
 
-        # Try SEC EDGAR first
-        result = self._fetch_from_edgar(ticker, statements, periods, frequency)
+        # Try SEC EDGAR first (blocking I/O → thread)
+        result = await asyncio.to_thread(
+            self._fetch_from_edgar, ticker, statements, periods, frequency
+        )
         if result and result.get("has_data"):
             return ToolResult(
                 success=True,
@@ -179,9 +185,11 @@ class FetchFinancialStatementsTool(BaseTool):
                 },
             )
 
-        # Fallback to Yahoo Finance
+        # Fallback to Yahoo Finance (blocking I/O → thread)
         logger.info("SEC EDGAR unavailable, trying Yahoo Finance", ticker=ticker)
-        result = self._fetch_from_yfinance(ticker, statements, periods, frequency)
+        result = await asyncio.to_thread(
+            self._fetch_from_yfinance, ticker, statements, periods, frequency
+        )
         if result and result.get("has_data"):
             return ToolResult(
                 success=True,

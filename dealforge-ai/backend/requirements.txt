@@ -7,6 +7,7 @@ python-socketio
 # Database
 sqlalchemy
 asyncpg
+aiosqlite
 alembic
 redis
 
@@ -16,7 +17,7 @@ langchain
 langchain-openai
 openai
 google-generativeai
-mistralai
+mistralai==1.1.0
 
 # Pydantic & Validation
 pydantic
@@ -25,6 +26,8 @@ pydantic-settings
 # HTTP Clients
 httpx
 aiohttp
+requests
+yfinance
 
 # Document Processing
 pypdf
@@ -40,6 +43,7 @@ pyyaml
 # External Data Tools
 duckduckgo-search
 beautifulsoup4
+financedatabase
 
 # Report Generation (McKinsey-style)
 python-pptx
@@ -65,3 +69,8 @@ plotly
 kaleido
 reportlab
 xlsxwriter
+
+# Filing Due Diligence & Quant Tools
+scikit-learn
+nltk
+sec-api

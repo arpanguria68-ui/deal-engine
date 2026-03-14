@@ -32,8 +32,10 @@ DEFAULT_AGENT_ROUTING = {
     "compliance_qa_agent": "lmstudio",
     "dcf_lbo_architect": "lmstudio",
     "ofas_supervisor": "lmstudio",
-    # ===== Orchestration/Planning → Local LLM (LM Studio preferred) =====
-    "project_manager": "lmstudio",
+    "complex_reasoning": "gemini",  # Forced to cloud for complex Chain-of-Thought
+    "advanced_financial_modeler": "gemini",  # High logic load
+    "data_curator": "lmstudio",
+    "report_architect": "lmstudio",
     # ===== Lighter tasks → Local LLM =====
     "market_researcher": "lmstudio",
     "market_risk_agent": "lmstudio",
@@ -56,7 +58,7 @@ TASK_TYPE_ROUTING = {
 }
 
 # Cloud providers that can serve as fallback
-CLOUD_PROVIDERS = {"gemini", "openai", "mistral"}
+CLOUD_PROVIDERS = {"gemini", "vertex", "openai", "mistral", "nvidia"}
 LOCAL_PROVIDERS = {"ollama", "lmstudio"}
 
 
@@ -73,7 +75,8 @@ class ModelRouter:
     def __init__(self):
         settings = SettingsService.get_instance()
         self.fallback_provider = settings.get("default_llm_provider", "gemini")
-        self.cloud_fallback = "gemini"  # ultimate fallback
+        # Use the user's default provider as cloud fallback instead of hardcoded gemini
+        self.cloud_fallback = self.fallback_provider if self.fallback_provider in CLOUD_PROVIDERS else "gemini"
 
         # Local LLM health cache
         self._local_health: Dict[str, bool] = {}
@@ -127,6 +130,9 @@ class ModelRouter:
 
         elif provider == "lmstudio":
             url = settings.get("lmstudio_base_url", "http://localhost:1234/v1")
+            url = url.rstrip("/")
+            if not url.endswith("/v1"):
+                url = f"{url}/v1"
 
             # Only swap for Docker if actually running in Docker
             if os.path.exists("/.dockerenv") or os.environ.get("RUNNING_IN_DOCKER"):

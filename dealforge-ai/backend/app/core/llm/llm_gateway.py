@@ -226,13 +226,16 @@ class TokenCounter:
 #  6. LLM Gateway — Central orchestration point
 # ═══════════════════════════════════════════════════════════
 
-# Default vendor limits (~85% of typical free/low-tier quotas)
+# Default vendor limits (aligned with standard free tier quotas)
 DEFAULT_VENDOR_LIMITS = {
-    "gemini": VendorLimits(max_rpm=12, max_tpm=80_000, max_rpd=1_400),
+    "gemini": VendorLimits(
+        max_rpm=15, max_tpm=1_000_000, max_rpd=1_500
+    ),  # Default to Flash limits
     "openai": VendorLimits(max_rpm=50, max_tpm=150_000, max_rpd=8_000),
     "mistral": VendorLimits(max_rpm=5, max_tpm=400_000, max_rpd=4_000),
     "ollama": VendorLimits(max_rpm=999, max_tpm=999_999, max_rpd=999_999),
     "lmstudio": VendorLimits(max_rpm=999, max_tpm=999_999, max_rpd=999_999),
+    "nvidia": VendorLimits(max_rpm=50, max_tpm=500_000, max_rpd=10_000),
 }
 
 # Fallback chain: if primary is over-quota, try these in order
@@ -240,8 +243,9 @@ FALLBACK_CHAIN = {
     "gemini": ["mistral", "openai", "ollama"],
     "openai": ["gemini", "mistral", "ollama"],
     "mistral": ["gemini", "openai", "ollama"],
-    "ollama": ["lmstudio", "gemini", "mistral"],
-    "lmstudio": ["ollama", "gemini", "mistral"],
+    "ollama": ["lmstudio", "gemini", "mistral", "nvidia"],
+    "lmstudio": ["ollama", "gemini", "mistral", "nvidia"],
+    "nvidia": ["gemini", "openai", "mistral"],
 }
 
 
@@ -325,6 +329,28 @@ class LLMGateway:
         actual_provider = provider
         fallback_used = False
 
+        # Dynamic limit adjustment for Gemini (Flash vs Pro)
+        if provider == "gemini":
+            settings = get_settings()
+            current_model = settings.GEMINI_MODEL.lower()
+            is_flash = "flash" in current_model
+
+            # Switch limits if needed
+            new_limits = VendorLimits(
+                max_rpm=15 if is_flash else 2,
+                max_tpm=1_000_000 if is_flash else 32_000,
+                max_rpd=1_500 if is_flash else 50,
+            )
+
+            # Update internal limiter if limits differ
+            if self.limiters["gemini"].limits != new_limits:
+                self.limiters["gemini"].limits = new_limits
+                logger.info(
+                    "dynamic_gemini_limits_applied",
+                    model=current_model,
+                    is_flash=is_flash,
+                )
+
         limiter = self.limiters.get(provider)
         if limiter and not limiter.can_send(est_total):
             # Try fallback chain
@@ -351,11 +377,12 @@ class LLMGateway:
                 tools=tools,
             )
 
+        result = None
         try:
             result = await exponential_backoff_retry(do_call)
         except Exception as e:
             logger.error("llm_call_failed", provider=actual_provider, error=str(e))
-            # Last resort: try local
+            # Last resort: try local if we haven't already
             if actual_provider not in ("ollama", "lmstudio"):
                 try:
                     client = get_llm_client("ollama")
@@ -364,15 +391,18 @@ class LLMGateway:
                     )
                     actual_provider = "ollama"
                     fallback_used = True
-                except Exception:
-                    return {
-                        "content": f"[Error] LLM call failed: {str(e)[:200]}",
-                        "provider_used": actual_provider,
-                        "tokens_est": est_total,
-                        "cached": False,
-                        "fallback_used": fallback_used,
-                        "error": str(e),
-                    }
+                except Exception as fallback_err:
+                    logger.error("llm_fallback_failed", error=str(fallback_err))
+            
+            if result is None:
+                return {
+                    "content": f"[Error] LLM call failed: {str(e)[:200]}",
+                    "provider_used": actual_provider,
+                    "tokens_est": est_total,
+                    "cached": False,
+                    "fallback_used": fallback_used,
+                    "error": str(e),
+                }
 
         content = result.get("content", "")
         actual_tokens = self.counter.estimate(content) + est_in
@@ -471,6 +501,7 @@ class LLMGateway:
             "mistral": "MISTRAL_MODEL",
             "ollama": "OLLAMA_MODEL",
             "lmstudio": "LMSTUDIO_MODEL",
+            "nvidia": "NVIDIA_MODEL",
         }
         attr = model_map.get(provider, "GEMINI_MODEL")
         return getattr(settings, attr, "unknown")

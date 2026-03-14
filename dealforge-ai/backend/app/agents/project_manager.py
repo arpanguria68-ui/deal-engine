@@ -21,7 +21,7 @@ from app.core.tasks.task_manager import get_task_manager, AGENT_CAPABILITIES
 DEAL_ANALYSIS_TEMPLATE = [
     {
         "title": "Financial Statement Analysis",
-        "description": "Analyze historical income statement, balance sheet, and cash flow. Calculate key ratios (margins, leverage, coverage). Identify trends and red flags.",
+        "description": "Analyze historical income statement, balance sheet, and cash flow for the target. Calculate key ratios (margins, leverage, coverage). Identify trends and red flags.",
         "assigned_agent": "financial_analyst",
         "priority": "critical",
     },
@@ -33,7 +33,7 @@ DEAL_ANALYSIS_TEMPLATE = [
     },
     {
         "title": "DCF Valuation Model",
-        "description": "Build a Discounted Cash Flow model with 5-year projected free cash flows, WACC calculation, and terminal value. Apply mid-year convention.",
+        "description": "Build a Discounted Cash Flow model for the target with 5-year projected free cash flows, WACC calculation, and terminal value. Apply mid-year convention.",
         "assigned_agent": "valuation_agent",
         "priority": "critical",
     },
@@ -45,38 +45,63 @@ DEAL_ANALYSIS_TEMPLATE = [
     },
     {
         "title": "LBO Returns Analysis",
-        "description": "Model leveraged buyout scenario with debt waterfall, cash flow sweep, and equity returns (IRR, MOIC) at various exit multiples.",
+        "description": "Model leveraged buyout scenario for the target with debt waterfall, cash flow sweep, and equity returns (IRR, MOIC) at various exit multiples.",
         "assigned_agent": "dcf_lbo_architect",
         "priority": "high",
     },
     {
+        "title": "Advanced Financial Modeling",
+        "description": "Build rigorous 3-statement models, downside scenarios, and Monte Carlo simulations for the target.",
+        "assigned_agent": "advanced_financial_modeler",
+        "priority": "high",
+    },
+    {
         "title": "Risk Assessment & Sensitivity Analysis",
-        "description": "Identify key risks (market, operational, financial, regulatory). Run sensitivity analysis on critical assumptions. Build risk heatmap.",
+        "description": "Identify key risks for the target (market, operational, financial, regulatory). Run sensitivity analysis on critical assumptions. Build risk heatmap.",
         "assigned_agent": "risk_assessor",
         "priority": "high",
     },
     {
         "title": "Legal & Regulatory Review",
-        "description": "Review legal structure, pending litigation, regulatory requirements. Flag material legal risks and compliance gaps.",
+        "description": "Review legal structure, pending litigation, regulatory requirements for the target. Flag material legal risks and compliance gaps.",
         "assigned_agent": "legal_advisor",
         "priority": "medium",
     },
     {
         "title": "Commercial Due Diligence",
-        "description": "Assess business model sustainability, customer concentration, revenue quality, and growth drivers. Validate management projections.",
+        "description": "Assess business model sustainability, customer concentration, revenue quality, and growth drivers for the target. Validate management projections.",
         "assigned_agent": "due_diligence_agent",
         "priority": "medium",
     },
     {
+        "title": "Data Curation & Synthesis",
+        "description": "Synthesize data from financial, legal, and risk agents for the target. Resolve any conflicting data points and query PageIndex for missing sector context.",
+        "assigned_agent": "data_curator_agent",
+        "priority": "high",
+    },
+    {
+        "title": "Complex Reasoning & Strategy",
+        "description": "Apply Chain-of-Thought reasoning to the curated data bible for the target. Formulate strategic insights and deeper transaction rationale.",
+        "assigned_agent": "complex_reasoning_agent",
+        "priority": "high",
+    },
+    {
         "title": "Bull vs Bear Debate",
-        "description": "Present and debate bull case and bear case arguments for the investment. Stress-test the investment thesis from both sides.",
+        "description": "Present and debate bull case and bear case arguments for the investment in the target. Stress-test the investment thesis from both sides.",
         "assigned_agent": "debate_moderator",
         "priority": "medium",
     },
     {
         "title": "Final Scoring & Recommendation",
-        "description": "Aggregate all analysis into final deal score (1-10). Provide clear BUY/PASS/CONDITIONAL recommendation with key conditions.",
+        "description": "Aggregate all analysis for the target into final deal score (1-10). Provide clear BUY/PASS/CONDITIONAL recommendation with key conditions.",
         "assigned_agent": "scoring_agent",
+        "priority": "critical",
+        "depends_on": [],
+    },
+    {
+        "title": "Report Architecture & Theming",
+        "description": "Select the appropriate report template, configure branding settings, and layout the final document structure.",
+        "assigned_agent": "report_architect_agent",
         "priority": "critical",
         "depends_on": [],
     },
@@ -182,7 +207,8 @@ class ProjectManagerAgent(BaseAgent):
     """
 
     name = "project_manager"
-    description = "Reasoning-first PM — identifies data needs, asks smart questions, creates structured task plans with risk flags before executing anything"
+    description: str = "Reasoning-first PM — identifies data needs, asks smart questions, creates structured task plans with risk flags before executing anything"
+    recommended_model: str = "Gemini 1.5 Pro (Complex Reasoning)"
 
     # ─────────────────────────────────────────────────────────────────────────
     # Phase 1 + 2 entry point
@@ -194,8 +220,19 @@ class ProjectManagerAgent(BaseAgent):
         """
         Combined Phase 1 (data requirements) + Phase 2 (clarifying questions).
         Returns a structured response that the UI renders as an interactive checklist.
+        If clarification_round >= 1, skips immediately (backend guardrail).
         """
         context = context or {}
+
+        # ── Tier 1 Guardrail: skip if already clarified once ──
+        clarification_round = context.get("clarification_round", 0)
+        if clarification_round >= 1:
+            return {
+                "phase": "clarification",
+                "clarifying_questions": [],
+                "skip_reason": "Already clarified. Proceeding to planning.",
+            }
+
         configured_mcps = context.get("available_mcp_providers", [])
         mcp_ids = [p["id"] for p in configured_mcps]
 
@@ -327,7 +364,24 @@ class ProjectManagerAgent(BaseAgent):
     async def _llm_clarifying_questions(
         self, task: str, context: Dict, data_reqs: Dict
     ) -> List[Dict]:
-        """Use LLM to generate high-quality Socratic questions with reasoning."""
+        """
+        Use LLM to generate high-quality Socratic questions with reasoning.
+        Injects prior memory context (Tier 2) and RL quality hints (Tier 3)
+        to reduce noise and improve question selection.
+        """
+        from app.core.memory.clarification_memory import ClarificationMemory
+        from app.core.memory.question_quality_store import QuestionQualityStore
+
+        memory = ClarificationMemory()
+        quality = QuestionQualityStore()
+        deal_type = memory.detect_deal_type(task)
+
+        # ── Tier 2: inject prior context so we don't re-ask settled questions ──
+        prior_context = memory.get_context_for_prompt(deal_type, task)
+
+        # ── Tier 3: inject historically high-quality question types ──
+        quality_hints = quality.get_summary_for_prompt(deal_type)
+
         mcp_info = context.get("available_mcp_providers", [])
         mcp_desc = (
             ", ".join(
@@ -344,30 +398,24 @@ class ProjectManagerAgent(BaseAgent):
 
 TASK: {task}
 
+{prior_context}{quality_hints}
 CONTEXT:
 - Available MCP data providers (can auto-fetch): {mcp_desc}
 - Data I can auto-fetch: {json.dumps(auto_items)}
 - Data user must provide: {json.dumps(user_items)}
 - Agent capabilities: {list(AGENT_CAPABILITIES.keys())}
 
-Before building a task plan, you must ask the user targeted questions. Your job is to:
-1. Identify ambiguities or missing information that would materially affect how you design the task plan
-2. Ask questions that reveal hidden complexity, constraints, or objectives
-3. Flag any operational issues the user might face while completing this work
+Before building a task plan, identify the 1-3 most critical unknowns that would materially change the plan design.
+Do NOT ask about anything already covered in PRIOR CONTEXT above.
 
-Return a JSON array of 4-7 question objects. Each must have:
-- "question": The specific question to ask (1-2 sentences)
-- "reasoning": Why you are asking this — what decision or task design does the answer affect? (start with "I'm asking because...")
+Return a JSON array of EXACTLY 1-3 question objects (NOT more than 3). Each must have:
+- "question": The specific question to ask (1-2 sentences, crisp and focused)
+- "reasoning": Why you are asking this (start with "I'm asking because...")
 - "type": "data_availability" | "scope" | "constraint" | "risk" | "objective"
 - "options": Optional list of 2-4 answer choices if applicable
-- "potential_issue": A specific operational issue/blocker this question helps surface (1 sentence)
+- "potential_issue": A specific blocker this question helps surface (1 sentence)
 
-Focus on questions that:
-- Clarify if required data is available or needs to be fetched/researched
-- Scope the analysis (e.g., time horizon, depth, specific focus areas)
-- Reveal constraints (budget, timeline, jurisdictions, deal structure)
-- Surface risks the user might not have considered
-
+CRITICAL: Return MAXIMUM 3 questions. Prefer 1-2 if context is already sufficient.
 Return ONLY the JSON array, no other text."""
 
         try:
@@ -376,22 +424,31 @@ Return ONLY the JSON array, no other text."""
             llm = get_model_router().get_client_for_agent(self.name)
             response = await llm.generate(
                 prompt=prompt,
-                system_prompt="You are a senior Scrum Master and investment banking PM. Return ONLY valid JSON arrays.",
-                temperature=0.4,
+                system_prompt="You are a senior Scrum Master and investment banking PM. Return ONLY valid JSON arrays. Maximum 3 questions.",
+                temperature=0.3,
             )
             content = response.get("content", "[]")
             from app.core.json_helpers import extract_and_parse_json
 
             questions = extract_and_parse_json(content)
+
+            # Handle cases where local LLMs wrap the array in a dict (e.g., {"questions": [...]})
+            if isinstance(questions, dict):
+                for key, value in questions.items():
+                    if isinstance(value, list) and len(value) > 0:
+                        questions = value
+                        break
+
             if isinstance(questions, list) and len(questions) > 0:
-                return questions
+                # Tier 1 hard cap: never return more than 3 questions
+                return questions[:3]
         except Exception as e:
             self.logger.warning("llm_clarification_failed", error=str(e))
 
         return self._fallback_clarifying_questions(task, data_reqs)
 
     def _fallback_clarifying_questions(self, task: str, data_reqs: Dict) -> List[Dict]:
-        """Deterministic fallback questions when LLM is unavailable."""
+        """Deterministic fallback questions when LLM is unavailable. Max 3 total."""
         questions = []
 
         if data_reqs["user_required"]:
@@ -473,11 +530,18 @@ Return ONLY the JSON array, no other text."""
         else:
             tasks = self._get_template_tasks(context)
 
+        # Extract metadata for the todo list
+        meta = await self._extract_deal_metadata(task, answers)
+        ticker = meta.get("ticker", context.get("ticker", ""))
+        company_name = meta.get(
+            "company_name", context.get("company_name", "Target Company")
+        )
+
         # Create the todo list
         deal_id = context.get("deal_id", "scratch")
         company_name = context.get("company_name", "Target Company")
         tm = get_task_manager()
-        todo_list = tm.create_todo_list(
+        todo_list = await tm.create_todo_list(
             deal_id=deal_id,
             title=f"Deal Analysis: {company_name}",
             description=(
@@ -485,6 +549,8 @@ Return ONLY the JSON array, no other text."""
                 "Review each task and its risk note before approving execution."
             ),
             items=tasks,
+            ticker=ticker,
+            company_name=company_name,
         )
 
         # Wire final tasks to depend on all prior tasks
@@ -532,9 +598,9 @@ AVAILABLE MCP PROVIDERS (auto-fetchable data):
 
 AVAILABLE AGENTS: {list(AGENT_CAPABILITIES.keys())}
 
-Create a MECE (Mutually Exclusive, Collectively Exhaustive) task list for this analysis.
+Create a MECE (Mutually Exclusive, Collectively Exhaustive) task list for this analysis. Make sure to utilize specialized agents like data_curator_agent, complex_reasoning_agent, advanced_financial_modeler, and report_architect_agent.
 
-Return a JSON array of 8-12 task objects. Each must have:
+Return a JSON array of 10-14 task objects. Each must have:
 - "title": Concise task name
 - "description": What this task does and the specific output it produces (2-3 sentences)
 - "assigned_agent": One of the available agents listed above
@@ -570,6 +636,32 @@ Return ONLY the JSON array, no other text."""
 
         return self._get_template_tasks(context)
 
+    async def _extract_deal_metadata(
+        self, task: str, answers: List[Dict]
+    ) -> Dict[str, str]:
+        """Extract ticker and company name from task or answers."""
+        prompt = f"""Extract the target company name and ticker symbol (if public) from the following context:
+
+TASK: {task}
+USER ANSWERS: {json.dumps(answers)}
+
+Return ONLY a JSON object:
+{{"company_name": "...", "ticker": "..."}}
+
+If missing, use "Target Company" and "" respectively.
+"""
+        try:
+            from app.core.llm.model_router import get_model_router
+
+            llm = get_model_router().get_client_for_agent(self.name)
+            response = await llm.generate(prompt=prompt, temperature=0.1)
+            from app.core.json_helpers import extract_and_parse_json
+
+            return extract_and_parse_json(response.get("content", "")) or {}
+        except Exception as e:
+            self.logger.warning("metadata_extraction_failed", error=str(e))
+            return {}
+
     def _extract_warnings(self, tasks: List[Dict]) -> List[str]:
         """Extract risk flags from tasks that are marked critical/high priority with blockers."""
         warnings = []
@@ -596,7 +688,7 @@ Return ONLY the JSON array, no other text."""
                 customized_tasks = self._get_template_tasks(context)
 
             tm = get_task_manager()
-            todo_list = tm.create_todo_list(
+            todo_list = await tm.create_todo_list(
                 deal_id=deal_id,
                 title=f"Deal Analysis: {company_name}",
                 description=(
@@ -657,8 +749,8 @@ Return a JSON array of tasks. Each task object must have:
 - "priority": "critical" | "high" | "medium" | "low"
 - "risk_flag": main risk or blocker for this task (1 sentence)
 
-Create 8-12 tasks covering: financial analysis, valuation (DCF + comps),
-risk assessment, market research, legal review, and final recommendations.
+Create 10-14 tasks covering: financial modeling, data curation, complex reasoning, 
+valuation, risk, market research, legal review, report architecture, and final recommendations.
 Order them by logical execution sequence.
 
 Return ONLY the JSON array, no other text."""
@@ -706,7 +798,7 @@ Return ONLY the JSON array, no other text."""
     ) -> Dict[str, Any]:
         """Execute a single task by routing to the assigned agent."""
         tm = get_task_manager()
-        todo = tm.get_todo_list(list_id)
+        todo = await tm.get_todo_list(list_id)
         if not todo:
             return {"error": f"Todo list {list_id} not found"}
 
@@ -714,7 +806,7 @@ Return ONLY the JSON array, no other text."""
         if not task_item:
             return {"error": f"Task {task_id} not found"}
 
-        tm.update_task(list_id, task_id, {"status": "in_progress"})
+        await tm.update_task(list_id, task_id, {"status": "in_progress"})
 
         try:
             if agent_registry:
@@ -726,14 +818,14 @@ Return ONLY the JSON array, no other text."""
                 result = await agent.run(
                     task_item.description, context={"task_id": task_id}
                 )
-                tm.mark_task_result(
+                await tm.mark_task_result(
                     list_id,
                     task_id,
                     result.data if result.success else {"error": result.reasoning},
                 )
                 return result.data
             else:
-                tm.mark_task_result(
+                await tm.mark_task_result(
                     list_id,
                     task_id,
                     {"note": f"Agent '{task_item.assigned_agent}' not available"},
@@ -741,13 +833,19 @@ Return ONLY the JSON array, no other text."""
                 return {"note": f"Agent '{task_item.assigned_agent}' not registered"}
 
         except Exception as e:
-            tm.update_task(list_id, task_id, {"status": "blocked"})
+            await tm.update_task(list_id, task_id, {"status": "blocked"})
             return {"error": str(e)}
 
     async def execute_all(self, list_id: str, agent_registry=None) -> Dict[str, Any]:
-        """Execute all pending tasks in order, respecting dependencies."""
+        """Execute all pending tasks in order, respecting dependencies.
+
+        Includes Scrum Master error resilience:
+        - Detects failed/blocked tasks after a full pass
+        - Retries them once, optionally re-assigning to a fallback agent
+        - Generates a user-facing failure summary if tasks remain incomplete
+        """
         tm = get_task_manager()
-        todo = tm.get_todo_list(list_id)
+        todo = await tm.get_todo_list(list_id)
         if not todo:
             return {"error": "Todo list not found"}
         if todo.status not in ("approved", "in_progress"):
@@ -757,17 +855,68 @@ Return ONLY the JSON array, no other text."""
         results = {}
         max_iterations = len(todo.items) * 2
 
+        # ── First pass: execute all ready tasks ──
         for _ in range(max_iterations):
-            ready = tm.get_next_tasks(list_id)
+            ready = await tm.get_next_tasks(list_id)
             if not ready:
                 break
             for task_item in ready:
                 result = await self.execute_task(list_id, task_item.id, agent_registry)
                 results[task_item.id] = result
 
+        # ── Error resilience: detect and retry failed tasks ──
+        todo = await tm.get_todo_list(list_id)  # Refresh from cache/DB
+        failed_tasks = [
+            item for item in todo.items if item.status in ("blocked", "pending")
+        ]
+
+        retried = []
+        if failed_tasks:
+            self.logger.warning(
+                "scrum_master_retry",
+                list_id=list_id,
+                failed_count=len(failed_tasks),
+                failed_ids=[t.id for t in failed_tasks],
+            )
+
+            for task_item in failed_tasks:
+                # Reset status to pending for retry
+                await tm.update_task(list_id, task_item.id, {"status": "pending"})
+
+                # Execute retry
+                retry_result = await self.execute_task(
+                    list_id, task_item.id, agent_registry
+                )
+                results[task_item.id] = retry_result
+                retried.append(task_item.id)
+
+        # ── Final status check ──
+        todo = await tm.get_todo_list(list_id)
+        still_failed = [item for item in todo.items if item.status not in ("done",)]
+
+        failure_summary = None
+        if still_failed:
+            failure_summary = {
+                "message": f"{len(still_failed)} task(s) could not be completed after retry.",
+                "failed_tasks": [
+                    {
+                        "id": t.id,
+                        "title": t.title,
+                        "assigned_agent": t.assigned_agent,
+                        "status": t.status,
+                    }
+                    for t in still_failed
+                ],
+            }
+            self.logger.error(
+                "scrum_master_unresolved_failures", summary=failure_summary
+            )
+
         return {
             "list_id": list_id,
             "status": todo.status,
             "results": results,
+            "retried_tasks": retried,
+            "failure_summary": failure_summary,
             "summary": todo.to_dict()["summary"],
         }

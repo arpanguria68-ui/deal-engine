@@ -22,7 +22,8 @@ class ProspectusProcessingAgent(BaseAgent):
     """
 
     name = "prospectus_agent"
-    description = "Processes S-1 filings, 10-K/10-Q documents, extracts structured KPIs and financial data"
+    description: str = "Processes S-1 filings, 10-K/10-Q documents, extracts structured KPIs and financial data"
+    recommended_model: str = "Gemini 1.5 Pro (Document Extraction)"
 
     async def run(self, task: str, context: Optional[Dict] = None) -> AgentOutput:
         start = datetime.utcnow()

@@ -1,6 +1,5 @@
-"""Gemini LLM Client"""
-
-import google.generativeai as genai
+# Deferred import to prevent startup hang
+# import google.generativeai as genai
 from typing import List, Dict, Any, Optional, AsyncGenerator
 import json
 import structlog
@@ -10,17 +9,40 @@ logger = structlog.get_logger()
 
 
 class GeminiClient:
-    """Client for Google's Gemini API"""
+    """Client for Google's Gemini API (AI Studio or Vertex AI)"""
 
-    def __init__(self, model: Optional[str] = None, api_key: Optional[str] = None):
+    def __init__(self, model: Optional[str] = None, api_key: Optional[str] = None, provider: str = "gemini"):
         settings = get_settings()
-        self.api_key = api_key or settings.GEMINI_API_KEY
-        self.model_name = model or settings.GEMINI_MODEL
-
-        if self.api_key:
-            genai.configure(api_key=self.api_key)
+        self.provider = provider
+        
+        if self.provider == "vertex":
+            self.api_key = api_key or settings.VERTEX_API_KEY
+            self.model_name = model or settings.VERTEX_MODEL
+            self.project_id = settings.VERTEX_PROJECT_ID
+            self.location = settings.VERTEX_LOCATION
+            
+            # For Vertex AI, we use the vertexai SDK
+            import vertexai
+            from vertexai.generative_models import GenerativeModel
+            
+            if self.api_key:
+                # If API key is provided for Vertex (less common, usually OAuth/Service Account)
+                # but we'll follow user request for "api key input pointy"
+                os.environ["GOOGLE_API_KEY"] = self.api_key
+            
+            vertexai.init(project=self.project_id, location=self.location)
+            logger.info("vertex_ai_initialized", project=self.project_id, location=self.location)
         else:
-            logger.warning("Gemini API key not configured")
+            self.api_key = api_key or settings.GEMINI_API_KEY
+            self.model_name = model or settings.GEMINI_MODEL
+            self.max_context = 1000000  # Gemini 1.5 context
+
+            import google.generativeai as genai
+
+            if self.api_key:
+                genai.configure(api_key=self.api_key)
+            else:
+                logger.warning("Gemini API key not configured")
 
     def _get_model(self, tools: Optional[List[Dict]] = None):
         """Get configured model instance"""
@@ -30,6 +52,37 @@ class GeminiClient:
             "top_k": 40,
             "max_output_tokens": 8192,
         }
+
+        if self.provider == "vertex":
+            from vertexai.generative_models import GenerativeModel, Tool as VertexTool, FunctionDeclaration
+            
+            if tools:
+                # Transform OpenAI-style tools to Vertex AI format
+                formatted_tools = []
+                for tool in tools:
+                    # ... reuse similar logic or adjust for Vertex if needed ...
+                    # Vertex expects Tool(function_declarations=[...])
+                    if isinstance(tool, dict):
+                        func = dict(tool.get("function", tool))
+                        func.pop("type", None)
+                        func.pop("strict", None)
+                        if "parameters" in func:
+                            func["parameters"] = self._fix_schema(func["parameters"])
+                        formatted_tools.append(FunctionDeclaration(**func))
+                
+                vertex_tool = VertexTool(function_declarations=formatted_tools)
+                
+                return GenerativeModel(
+                    model_name=self.model_name,
+                    generation_config=generation_config,
+                    tools=[vertex_tool],
+                )
+            
+            return GenerativeModel(
+                model_name=self.model_name, generation_config=generation_config
+            )
+
+        import google.generativeai as genai
 
         if tools:
             # Transform OpenAI-style tools to Gemini format
@@ -257,6 +310,8 @@ class OpenAIClient:
         settings = get_settings()
         self.client = AsyncOpenAI(api_key=api_key or settings.OPENAI_API_KEY)
         self.model = model or settings.OPENAI_MODEL
+        self.provider = "openai"
+        self.max_context = 128000
 
     async def generate(
         self,
@@ -321,12 +376,22 @@ class MistralClient:
     """Client for Mistral API using official SDK"""
 
     def __init__(self, api_key: Optional[str] = None, model: Optional[str] = None):
-        from mistralai import Mistral
+        try:
+            from mistralai import Mistral
+        except ImportError:
+            # Fallback for older SDK versions
+            try:
+                from mistralai.client import MistralClient as Mistral
+            except ImportError:
+                logger.error("Mistral library not found or incompatible version")
+                raise
 
         settings = get_settings()
         self.api_key = api_key or settings.MISTRAL_API_KEY
         self.model = model or settings.MISTRAL_MODEL
         self.client = Mistral(api_key=self.api_key)
+        self.provider = "mistral"
+        self.max_context = 32000
 
     async def generate(
         self,

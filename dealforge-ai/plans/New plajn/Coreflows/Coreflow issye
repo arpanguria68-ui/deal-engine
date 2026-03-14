@@ -1,0 +1,176 @@
+## Overview
+
+These five flows define how DealForge AI should behave when a user runs deal analysis. They span from the moment a user submits a deal prompt to the final formatted deliverable — covering tool calling, LLM resilience, output quality, and document retrieval.
+
+The primary user interaction paths in DealForge are:
+
+```mermaid
+flowchart TD
+    A[User submits deal prompt] --> B{Entry Path}
+    B -->|Chat Pipeline| C[Clarify → Plan → Execute Tasks]
+    B -->|Full Workflow| D[Create Deal → Run Workflow → Download Report]
+    B -->|OFAS Mission| E[Create Mission → Monitor → Review Gates]
+    B -->|Direct Agent| F[Run Single Agent]
+    C --> G[Agent Execution Layer]
+    D --> G
+    E --> G
+    F --> G
+    G --> H[Tool-Backed Analysis]
+    H --> I[Formatted Output]
+```
+
+All four paths converge on the same agent execution layer — meaning the fixes in these flows improve every interaction path simultaneously.
+
+---
+
+## Flow 1: Tool-Backed Agent Analysis
+
+**Description:** When any agent runs an analysis task, it must fetch real data from external tools and indexed documents rather than hallucinating information.
+
+**Trigger:** Any agent is asked to perform an analysis task (via chat execute-task, deal workflow, OFAS mission, or direct agent run).
+
+**Steps:**
+
+1. The agent receives a task and deal context (company name, ticker, industry, deal stage).
+2. The agent queries the knowledge base for relevant indexed documents, using the deal identifier as a filter — not as raw text appended to a keyword search.
+3. The agent determines which data tools are needed for this specific task type (e.g., financial analyst needs SEC EDGAR data; market researcher needs web search results).
+4. The agent calls the LLM with: the task prompt, the retrieved document context, and the tool schemas available to it.
+5. The LLM either calls tools natively (cloud providers) or produces structured tool-call instructions (local models).
+6. Tool results come back (real financial data, search results, company info). The agent feeds these results back to the LLM for final synthesis.
+7. The final analysis output **cites specific tool sources** for every data claim (e.g., "Revenue: $15.2B — source: SEC EDGAR 10-K FY2024").
+8. If tool calls fail (API error, missing key), the agent logs a clear warning in its output rather than silently hallucinating replacement data.
+
+```mermaid
+sequenceDiagram
+    participant U as User / Orchestrator
+    participant A as Agent
+    participant RAG as Knowledge Base
+    participant LLM as LLM Provider
+    participant T as Data Tools
+
+    U->>A: Run task with deal context
+    A->>RAG: Semantic query (filtered by deal)
+    RAG-->>A: Relevant document chunks
+    A->>LLM: Task + RAG context + tool schemas
+    LLM-->>A: Tool call request (e.g., fetch_financial_statements)
+    A->>T: Execute tool call
+    T-->>A: Real data (SEC EDGAR, Finnhub, etc.)
+    A->>LLM: Follow-up with tool results
+    LLM-->>A: Final cited analysis
+    A-->>U: Structured output with sources
+```
+
+**Key behaviour change:** Every agent must invoke tools through the shared tool-calling path. No agent may call the LLM directly for a task that has tool schemas assigned to it. Agents that currently bypass this (like the market researcher) must be corrected.
+
+---
+
+## Flow 2: LLM Request Resilience
+
+**Description:** When the system makes LLM calls, it must handle rate limits, provider outages, and quota exhaustion gracefully — without failing silently or producing empty results.
+
+**Trigger:** Any LLM generation request from any agent, in any execution path.
+
+**Steps:**
+
+1. The agent prepares a prompt and requests LLM generation.
+2. Before sending, the system checks the target provider's current usage against its rate limits (RPM/TPM quotas configured in Settings).
+3. **If within limits:** The request goes through. Usage is registered. If the provider returns a 429/5xx, the system retries with exponential backoff (up to 5 attempts).
+4. **If over quota:** The system walks a fallback chain (e.g., Gemini → Mistral → OpenAI → local LLM) and sends the request to the first available provider.
+5. If the response is a deterministic call (temperature=0), the result is cached so identical requests don't consume quota.
+6. For large contexts, the system can optionally compress context using a local LLM before sending to a cloud provider — saving cloud TPM.
+7. The actual provider used is logged alongside the agent output, so the user can see which LLM powered each analysis.
+
+**Key behaviour change:** All agent LLM calls must route through the central gateway layer. The gateway enforces rate limits, retries, fallback, and caching. Direct LLM client calls from agents are eliminated.
+
+---
+
+## Flow 3: Stage-Aware Output Formatting
+
+**Description:** Agent outputs adapt their depth, structure, and format based on the current deal stage, producing deliverables appropriate for the context — from quick screening summaries to full IC memos.
+
+**Trigger:** An agent begins producing output for a task that has a deal stage context.
+
+**Steps:**
+
+1. When a task is dispatched to an agent, the deal context includes a `stage` indicator: **screening**, **deep-dive**, or **ic-memo**.
+2. The agent's system prompt adjusts its output expectations based on stage:
+
+
+| Stage         | Output Style                         | Depth                          | Format                                                                            |
+| ------------- | ------------------------------------ | ------------------------------ | --------------------------------------------------------------------------------- |
+| **Screening** | Quick assessment, 1-page summary     | High-level conviction check    | Key metrics, go/no-go signal, 3 bullet risks                                      |
+| **Deep-Dive** | Full workstream analysis             | Comprehensive with methodology | Detailed JSON with data tables, sourced claims, risk matrix                       |
+| **IC Memo**   | Recommendation-first executive brief | Pyramid Principle structured   | SCQA framework (Situation-Complication-Question-Answer), deal score, action items |
+
+
+3. The deal stage is determined from the deal's `current_stage` field, or from the task context when running through the chat pipeline.
+4. When the deal is in **screening**, agents skip exhaustive analysis and focus on thesis validation and red flags. This reduces LLM calls and speeds up initial triage.
+5. When the deal progresses to **deep-dive**, agents produce full structured analysis with all tool-sourced data, comparable company data, and risk frameworks.
+6. At the **IC memo** stage, the compiler agent synthesizes all prior agent outputs into a Pyramid Principle document: lead with the recommendation, then group supporting arguments, then detailed evidence.
+7. Every output — regardless of stage — must include: a confidence score, the LLM provider used, a citation list linking claims to data sources, and a clear recommendation signal.
+
+**Key behaviour change:** Agents currently produce the same exhaustive JSON regardless of stage. After this change, screening runs are fast and lightweight, while IC memos are executive-ready.
+
+---
+
+## Flow 4: Knowledge Base Document Pipeline
+
+**Description:** When a user uploads deal documents, they are indexed for semantic retrieval. When agents run, they query this index with well-constructed, context-aware queries — not keyword-stuffed strings.
+
+**Trigger:** Document upload via the API, or agent task execution that requires document context.
+
+**Steps — Ingestion:**
+
+1. The user uploads a document (PDF, DOCX, TXT) via the document upload endpoint, associating it with a specific deal.
+2. The document is processed by the PageIndex service: chunked, embedded, and stored in a tree-structured index.
+3. The deal identifier is stored as **metadata** on every chunk — not embedded in the text content.
+4. The user receives confirmation: document ID, total pages, total chunks indexed.
+
+**Steps — Retrieval during analysis:**
+
+1. When an agent needs document context for a task, it constructs a **semantic query** based on the specific analysis question — not a generic keyword dump.
+2. Example query transformations:
+
+
+| Agent             | Current (broken)                                     | Desired                                                                                             |
+| ----------------- | ---------------------------------------------------- | --------------------------------------------------------------------------------------------------- |
+| Financial Analyst | `"financial data revenue EBITDA cash flow deal-123"` | `"What are the historical revenue and EBITDA margins?"` filtered by deal_id=deal-123                |
+| Market Researcher | `"market industry competition trend growth"`         | `"Who are the main competitors and what is the total addressable market size?"` filtered by deal_id |
+| Risk Assessor     | `"risk regulatory compliance"`                       | `"What regulatory risks or pending litigation are disclosed?"` filtered by deal_id                  |
+
+
+3. The deal identifier is passed as a **metadata filter**, not appended to the query text.
+4. Retrieved chunks include relevance scores. Only chunks above a minimum relevance threshold are included in the agent's context.
+5. Each chunk's page number and source document are preserved, so the agent can cite "Source: uploaded_financials.pdf, page 14" in its output.
+
+**Key behaviour change:** RAG queries become task-specific semantic questions with proper metadata filtering, instead of generic keyword strings. This dramatically improves retrieval relevance.
+
+---
+
+## Flow 5: Local LLM Tool Calling
+
+**Description:** When agents are routed to a local LLM (LM Studio / Ollama), tool calling must work reliably despite local models lacking native function-calling support.
+
+**Trigger:** Any agent routed to a local LLM provider that has tools assigned to it.
+
+**Steps:**
+
+1. The system checks whether the target provider is local (LM Studio, Ollama) or cloud (Gemini, OpenAI, Mistral).
+2. **For cloud providers:** Tool schemas are passed natively. The LLM returns structured function calls. Standard path.
+3. **For local providers:** The system injects tool descriptions into the system prompt as a ReAct-style instruction block, telling the model to produce JSON tool-call blocks.
+4. The local model generates a response. The system parses the response for tool-call JSON blocks.
+5. **If parsing succeeds:** Tools are executed, results fed back to the model for final synthesis.
+6. **If parsing fails** (malformed JSON — common with smaller models): The system attempts JSON repair (fixing missing brackets, unquoted keys, trailing commas). If repair fails, the agent proceeds without tool data and logs a warning.
+7. For agents assigned to tasks requiring high reasoning (complex financial modeling, chain-of-thought valuation), the routing table should direct them to a cloud provider or a sufficiently large local model — not a small model that will produce unreliable tool calls.
+
+**Agent routing by reasoning tier:**
+
+
+| Tier                  | Task Types                                                          | Recommended Provider                   |
+| --------------------- | ------------------------------------------------------------------- | -------------------------------------- |
+| **High reasoning**    | DCF/LBO modeling, complex chain-of-thought, IC memo synthesis       | Cloud (Gemini) or large local (14B+)   |
+| **Standard analysis** | Financial analysis, market research, risk assessment, due diligence | Large local (14B+) with cloud fallback |
+| **Simple extraction** | Data formatting, scoring, classification                            | Any local model                        |
+
+
+**Key behaviour change:** The local model tool-calling path becomes robust with JSON repair and tier-aware routing, instead of silently failing when a small model produces malformed output.

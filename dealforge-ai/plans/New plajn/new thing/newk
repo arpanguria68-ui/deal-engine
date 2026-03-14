@@ -1,0 +1,454 @@
+## Architectural Decisions (Agreed)
+
+
+| Decision                | Choice                                   | Rationale                                                                                                                                                                      |
+| ----------------------- | ---------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Provenance persistence  | Redis + PostgreSQL hybrid                | Real-time access during workflow via Redis; flush to PostgreSQL on completion for audit queries. Matches existing Redis-first pattern.                                         |
+| Output adapter strategy | Static mapping + LLM extraction fallback | Maximum resilience against LLM output field variability. Static paths cover 90% of cases; LLM fallback handles edge cases.                                                     |
+| Consistency checker     | Extend HaluGate NLI engine               | Reuses the existing claim extraction and numeric verification infrastructure. Adds cross-agent comparison as a new mode alongside the existing narrative-vs-ground-truth mode. |
+
+
+---
+
+## 1. Architectural Approach
+
+### 1.1 Core Principle: Intercept Low, Enrich High
+
+The architecture follows a single principle: **capture data at the lowest infrastructure layer, enrich and expose at the highest**. Provenance is captured at `ToolRouter.execute()`, consistency is checked at the orchestrator graph level, and enrichment (footnotes, estimates) happens at the report generation layer.
+
+### 1.2 Key Architectural Changes
+
+**A. LLM Gateway Integration (Issues 1, 2)**
+
+Currently `BaseAgent.generate_with_tools()` in file:backend/app/agents/base.py calls `model_router.get_client_for_agent()` directly, bypassing the fully-implemented `LLMGateway` in file:backend/app/core/llm/llm_gateway.py. The fix is a single wiring change: replace the two `llm.generate()` call sites inside `generate_with_tools()` with `get_llm_gateway().call()`. The gateway already handles rate limiting, exponential backoff, fallback chains, and response caching — all dead code today.
+
+The `generate_issue_tree()` method (line 477 in base.py) also bypasses the gateway and must be rewired identically.
+
+**B. Multi-Round Tool Loop (Issue 6)**
+
+`generate_with_tools()` currently executes exactly one round: LLM → tool calls → follow-up synthesis. This becomes a loop of up to 3 iterations. After each synthesis, if the LLM indicates it needs more data (via further tool call blocks in its response), the loop continues. An iteration counter prevents runaway loops. All intermediate tool results accumulate into the provenance chain.
+
+**C. Provenance Capture at ToolRouter (Issue 9)**
+
+`ToolRouter.execute()` in file:backend/app/core/tools/tool_router.py is the single point where every tool runs. A thin interception layer wraps each `tool.execute()` call, capturing: tool name, parameters, raw response, timestamp, and a generated provenance ID. During workflow execution, records are written to Redis keyed by `provenance:{deal_id}:{record_id}`. On workflow completion, a flush operation persists all records to the PostgreSQL `provenance_records` table.
+
+**D. DealState Extension (Issues 2, 3, 7)**
+
+The `DealState` TypedDict in file:backend/app/orchestrator/state.py gains new fields: `deal_stage`, `buyer_thesis`, `deal_goal`, `consistency_warnings`, and `provenance_summary`. The `create_initial_state()` factory function is updated to accept and populate these from the deal creation request.
+
+**E. Stage-Aware Prompt Injection (Issue 2)**
+
+`BaseAgent.build_system_prompt()` in file:backend/app/agents/base.py is extended to accept the deal context and inject stage-specific formatting instructions. The three stages map to distinct prompt suffixes:
+
+
+| Stage     | Prompt Instruction                                                                                               |
+| --------- | ---------------------------------------------------------------------------------------------------------------- |
+| Screening | "Focus on go/no-go signals. Produce a 1-page summary with key metrics and 3 bullet risks."                       |
+| Deep-Dive | "Provide exhaustive evidence-backed analysis with data tables, sourced claims, and risk matrices."               |
+| IC Memo   | "Structure output using Pyramid Principle: Situation → Complication → Resolution. Lead with the recommendation." |
+
+
+Each agent's custom `_build_system_prompt()` calls the base method first (inheriting deal-goal and stage instructions), then appends agent-specific expertise.
+
+**F. New Orchestrator Node: Consistency Check (Issue 7)**
+
+A new `consistency_check` node is inserted into the LangGraph workflow in file:backend/app/orchestrator/graph.py, positioned between `parallel_analysis` and `debate`. This node invokes the extended HaluGate engine in cross-agent mode. Results are stored as `consistency_warnings` on `DealState` and flow downstream to Red Team, Scoring, and Report Generation.
+
+**G. Output Adapter for Scoring (Issue 4)**
+
+A new adapter layer sits between agent outputs and the `DealScorer` in file:backend/app/core/scoring/deal_scorer.py. It uses a declarative mapping dict with multiple path alternatives per scorer field. When no static path matches, it invokes a lightweight LLM extraction call. Fields that can't be resolved are marked `unavailable` — the scorer reduces confidence on that component rather than scoring it as zero.
+
+**H. Report Integrity (Issue 5)**
+
+The report generator in file:backend/app/core/reports/report_generator.py is restructured. All hardcoded fabrication (multiplier-based projections, fake CAGR) is removed. Each data point is tagged as either `tool_sourced` (with a provenance reference for footnote generation) or `estimated` (with LLM-generated methodology disclosure). The Business Analyst agent in file:backend/app/agents/business_analyst.py is updated to produce stage-appropriate SCQA output.
+
+### 1.3 What Doesn't Change
+
+- The 4 entry paths (Chat, Full Workflow, OFAS, Direct Agent) remain unchanged
+- API endpoint signatures remain backward-compatible (new fields are optional additions)
+- The existing HaluGate end-of-workflow verification remains — the new cross-agent mode is additive
+- The SQLAlchemy model base, session management, and migration approach remain the same
+
+### 1.4 End-to-End Request Trace (Post-Fix)
+
+```mermaid
+sequenceDiagram
+    participant U as User
+    participant API as FastAPI
+    participant O as Orchestrator
+    participant A as Agent
+    participant GW as LLM Gateway
+    participant TR as ToolRouter
+    participant R as Redis
+    participant CC as HaluGate Cross-Check
+    participant OA as Output Adapter
+    participant SC as DealScorer
+    participant RG as Report Generator
+    participant PG as PostgreSQL
+
+    U->>API: POST /deals (stage=deep_dive, thesis=...)
+    API->>R: Save deal with stage, thesis, goal
+    U->>API: POST /deals/{id}/run
+    API->>O: run_deal(deal_id, stage, thesis)
+    O->>A: Run parallel agents (financial, legal, risk, market)
+    A->>GW: generate_with_tools() via Gateway
+    GW-->>A: Tool call request
+    A->>TR: execute(tool_name, params)
+    Note over TR: Provenance interception
+    TR->>R: Store provenance record
+    TR-->>A: Tool result + provenance_id
+    Note over A: Multi-round loop (up to 3)
+    A-->>O: Agent output with inline sources
+    O->>CC: Cross-agent consistency check
+    CC-->>O: Consistency warnings (soft)
+    O->>OA: Map agent outputs to scorer schema
+    OA->>GW: LLM extraction for unmapped fields
+    OA-->>SC: Mapped inputs + availability flags
+    SC-->>O: Score with data_coverage + consistency penalty
+    O->>RG: Generate report (stage-aware, provenance-backed)
+    Note over RG: Footnotes from provenance, estimates with disclosure
+    O->>R: Flush provenance to PostgreSQL
+    R->>PG: Bulk insert provenance_records
+    O-->>API: Final state
+    API-->>U: Deal complete (score, report, warnings)
+```
+
+### 1.5 Failure Modes
+
+
+| Failure Point                               | Current Behavior                            | Post-Fix Behavior                                                                         |
+| ------------------------------------------- | ------------------------------------------- | ----------------------------------------------------------------------------------------- |
+| Tool API error (e.g., Finnhub 401)          | Silent failure or crash                     | Warning in agent output; data point marked `[ESTIMATED]` with methodology                 |
+| LLM rate limit hit                          | Request fails, no fallback                  | Gateway retries with backoff → falls back to next provider in chain                       |
+| Redis unavailable during workflow           | N/A (new)                                   | Provenance records buffered in-memory, flushed to PostgreSQL directly on completion       |
+| Output adapter can't map a field            | Scorer gets zero, produces misleading score | Field marked `unavailable`, scorer reduces confidence on that component                   |
+| Consistency check finds contradiction       | Not detected until end (HaluGate)           | Soft warning logged, propagated to Red Team + Scorer + Report                             |
+| Local LLM produces malformed JSON tool call | Silent tool-call failure                    | JSON repair attempted; if repair fails, agent proceeds without tool data and logs warning |
+
+
+---
+
+## 2. Data Model
+
+### 2.1 New Entity: ProvenanceRecord
+
+Persisted in PostgreSQL for long-term audit queries. During workflow execution, records live in Redis for real-time access.
+
+```
+ProvenanceRecord
+├── id: String(36) PK — UUID
+├── deal_id: String(36) FK → deals.id — links to deal
+├── agent_name: String(100) — which agent consumed this data
+├── tool_name: String(100) — which tool produced the data
+├── tool_params: JSON — parameters sent to the tool
+├── raw_response: JSON — exact response from the tool
+├── timestamp: DateTime — when the tool was called
+├── data_freshness: String(50) — e.g., "FY2024", "2025-03-08", "real-time"
+├── execution_round: Integer — which iteration of the multi-round loop (1, 2, or 3)
+├── claim_refs: JSON — list of claim strings in the agent output that reference this record
+└── created_at: DateTime
+```
+
+**Redis key pattern during workflow:** `provenance:{deal_id}:{record_id}` → JSON blob with same fields. TTL: 24 hours (auto-cleanup for abandoned workflows).
+
+**Relationships:** Many `ProvenanceRecord` → one `Deal`. Queryable by deal_id, agent_name, tool_name, and time range.
+
+### 2.2 New Entity: ConsistencyWarning
+
+Stored as part of `DealState` during workflow execution, and persisted to PostgreSQL on completion.
+
+```
+ConsistencyWarning
+├── id: String(36) PK — UUID
+├── deal_id: String(36) FK → deals.id
+├── agent_a: String(100) — first agent in the contradiction
+├── claim_a: Text — the claim from agent_a
+├── agent_b: String(100) — second agent
+├── claim_b: Text — the claim from agent_b
+├── severity: String(20) — "minor" or "material"
+├── explanation: Text — description of the contradiction
+├── resolved: Boolean — whether downstream analysis resolved it
+├── resolution_note: Text — how Red Team / Scorer handled it
+└── created_at: DateTime
+```
+
+### 2.3 Extended Existing Entities
+
+**Deal model** (file:backend/app/db/models.py) — 3 new columns:
+
+```
+Deal (existing)
+├── ... existing columns ...
+├── deal_stage: String(20) — "screening", "deep_dive", "ic_memo" (NEW)
+├── buyer_thesis: Text — free-text investment thesis (NEW)
+└── deal_goal: Text — what the analysis should determine (NEW)
+```
+
+**DealScore model** (file:backend/app/db/models.py) — 2 new columns:
+
+```
+DealScore (existing)
+├── ... existing columns ...
+├── data_coverage: Float — percentage of inputs from real tool data (NEW)
+└── consistency_penalty: Float — score deduction from contradictions (NEW)
+```
+
+### 2.4 Extended DealState TypedDict
+
+The `DealState` TypedDict in file:backend/app/orchestrator/state.py gains:
+
+```
+DealState (existing TypedDict)
+├── ... existing fields ...
+├── deal_stage: str — "screening" | "deep_dive" | "ic_memo" (NEW)
+├── buyer_thesis: Optional[str] (NEW)
+├── deal_goal: Optional[str] (NEW)
+├── consistency_warnings: List[Dict] (NEW)
+└── provenance_summary: Dict[str, int] (NEW) — {tool_name: call_count}
+```
+
+The `create_initial_state()` factory function in the same file is extended to accept and populate these fields.
+
+### 2.5 Entity Relationship Diagram
+
+```mermaid
+classDiagram
+    class Deal {
+        +String id
+        +String name
+        +String deal_stage
+        +String buyer_thesis
+        +String deal_goal
+        +String target_company
+    }
+    class ProvenanceRecord {
+        +String id
+        +String deal_id
+        +String agent_name
+        +String tool_name
+        +JSON tool_params
+        +JSON raw_response
+        +DateTime timestamp
+        +String data_freshness
+        +Integer execution_round
+        +JSON claim_refs
+    }
+    class ConsistencyWarning {
+        +String id
+        +String deal_id
+        +String agent_a
+        +Text claim_a
+        +String agent_b
+        +Text claim_b
+        +String severity
+        +Boolean resolved
+    }
+    class DealScore {
+        +String id
+        +String deal_id
+        +Float total_score
+        +Float data_coverage
+        +Float consistency_penalty
+    }
+    class AgentRun {
+        +String id
+        +String deal_id
+        +String agent_type
+        +JSON output_data
+    }
+    Deal "1" --> "*" ProvenanceRecord : has
+    Deal "1" --> "*" ConsistencyWarning : has
+    Deal "1" --> "1" DealScore : has
+    Deal "1" --> "*" AgentRun : has
+```
+
+---
+
+## 3. Component Architecture
+
+### 3.1 Component Overview
+
+Five new components are introduced. Three existing components are modified. All new components are designed as thin, focused layers that integrate with existing infrastructure.
+
+```mermaid
+graph TD
+    A[ToolRouter] -->|wraps| B[ProvenanceCollector]
+    B -->|writes| C[Redis - realtime]
+    C -->|flushes| D[PostgreSQL - long term]
+    E[BaseAgent.generate_with_tools] -->|uses| A
+    E -->|uses| F[LLM Gateway]
+    E -->|enriches output| B
+    G[Orchestrator Graph] -->|new node| H[HaluGate CrossCheck]
+    G -->|passes outputs| I[OutputAdapter]
+    I -->|mapped inputs| J[DealScorer]
+    I -->|unmapped fields| F
+    H -->|warnings| G
+    G -->|all data| K[Report Generator]
+    K -->|reads| D
+```
+
+### 3.2 New Component: ProvenanceCollector
+
+**Responsibility:** Capture every tool execution with full context, store to Redis for real-time access, and flush to PostgreSQL on workflow completion.
+
+**Integration point:** Wraps `ToolRouter.execute()` in file:backend/app/core/tools/tool_router.py. The existing `execute()` method is modified to call the collector before and after each tool run.
+
+**Interface:**
+
+
+| Method              | Input                                                 | Output              | Description                                                                                                                   |
+| ------------------- | ----------------------------------------------------- | ------------------- | ----------------------------------------------------------------------------------------------------------------------------- |
+| `record_tool_call`  | deal_id, agent_name, tool_name, params, result, round | provenance_id (str) | Generates a provenance record, writes to Redis, returns the ID for agent output attachment                                    |
+| `flush_to_postgres` | deal_id                                               | count (int)         | Reads all `provenance:{deal_id}:*` keys from Redis, bulk-inserts to PostgreSQL `provenance_records` table, deletes Redis keys |
+| `get_records`       | deal_id, filters (agent, tool, date range)            | List of records     | Queries Redis during workflow or PostgreSQL after completion                                                                  |
+| `export_chain`      | deal_id                                               | JSON document       | Full provenance chain for compliance export                                                                                   |
+
+
+**Data flow:** `ToolRouter.execute()` → `ProvenanceCollector.record_tool_call()` → Redis. On `_node_complete` in the orchestrator graph → `ProvenanceCollector.flush_to_postgres()` → PostgreSQL.
+
+**Failure handling:** If Redis is unavailable, records are buffered in an in-memory list on the collector instance and flushed directly to PostgreSQL on completion.
+
+### 3.3 New Component: OutputAdapter
+
+**Responsibility:** Translate agent output JSON (with LLM-variable field names) into the fixed schema expected by `DealScorer.score()` in file:backend/app/core/scoring/deal_scorer.py.
+
+**Integration point:** Called by the orchestrator's `_node_scoring` in file:backend/app/orchestrator/graph.py, between agent output collection and scorer invocation.
+
+**Interface:**
+
+
+| Method           | Input                                        | Output                              | Description                                                                                            |
+| ---------------- | -------------------------------------------- | ----------------------------------- | ------------------------------------------------------------------------------------------------------ |
+| `adapt`          | agent_outputs: Dict[str, Dict], deal_id: str | ScorerInput with availability flags | Maps all agent outputs to scorer's 6 input dicts (market, team, traction, financials, risk, strategic) |
+| `_resolve_field` | field_name, source_paths, agent_outputs      | value or "unavailable"              | Tries static paths first, then regex scan, then LLM extraction                                         |
+
+
+**Static mapping structure** (declarative):
+
+
+| Scorer Field               | Primary Path                                       | Fallback Paths                                                           |
+| -------------------------- | -------------------------------------------------- | ------------------------------------------------------------------------ |
+| `total_addressable_market` | `market_output.market_size.tam`                    | `market_output.tam`, `market_output.total_addressable_market`            |
+| `market_growth_rate`       | `market_output.market_size.growth_rate`            | `market_output.growth_rate`                                              |
+| `annual_revenue`           | `financial_output.revenue_analysis.annual_revenue` | `financial_output.revenue`, `financial_output.financial_summary.revenue` |
+| `gross_margin`             | `financial_output.profitability.gross_margin`      | `financial_output.margins.gross`                                         |
+| `legal_risks`              | `legal_output.risks`                               | `legal_output.legal_risks`, `legal_output.risk_factors`                  |
+| `regulatory_risks`         | `risk_output.regulatory_risks`                     | `risk_output.compliance_risks`                                           |
+
+
+When no static path matches, the adapter sends the relevant agent output to a lightweight LLM call: *"Extract the {field_name} value from this JSON. Return only the numeric value or 'unavailable'."* This call routes through the LLM Gateway with `temperature=0` (cacheable).
+
+**Output:** Each mapped field carries an `availability` flag: `"tool_sourced"`, `"llm_extracted"`, or `"unavailable"`. The scorer uses this to compute the `data_coverage` metric.
+
+### 3.4 Modified Component: HaluGate — Cross-Agent Mode
+
+**Responsibility (extended):** In addition to its existing narrative-vs-ground-truth verification, HaluGate gains a **cross-agent mode** that compares claims from multiple agents against each other.
+
+**Integration point:** The existing `HaluGateEngine` class in file:backend/app/core/halugate/nli_engine.py gains a new method. Called from the new `consistency_check` node in the orchestrator.
+
+**New method interface:**
+
+
+| Method               | Input                          | Output                   | Description                                                                                                                |
+| -------------------- | ------------------------------ | ------------------------ | -------------------------------------------------------------------------------------------------------------------------- |
+| `cross_agent_verify` | agent_outputs: Dict[str, Dict] | List[ConsistencyWarning] | Extracts numeric claims from each agent's output using the existing `_extract_claims()` method, then cross-references them |
+
+
+**Cross-check rules applied:**
+
+
+| Check               | Agent A                         | Agent B                                 | Condition for Warning                           |
+| ------------------- | ------------------------------- | --------------------------------------- | ----------------------------------------------- |
+| Revenue vs. TAM     | financial_analyst (revenue)     | market_researcher (TAM)                 | revenue > TAM → material                        |
+| Growth alignment    | financial_analyst (growth_rate) | market_researcher (market_growth)       | difference > 15 percentage points → material    |
+| Risk coverage       | risk_assessor (risk categories) | legal_advisor (risk mentions)           | risk flagged by one but absent in other → minor |
+| Revenue consistency | financial_analyst (revenue)     | business_analyst (revenue in synthesis) | values differ by > 10% → material               |
+
+
+The existing `_extract_numbers()` method is reused for numeric extraction. The existing `NLIVerdict` enum is extended with a new value: `CROSS_AGENT_CONFLICT`.
+
+**Severity classification:** Numeric discrepancies > 10% are `material`. Categorical mismatches (risk flagged vs. not mentioned) are `minor`. Material contradictions carry a default -5% scoring penalty each.
+
+### 3.5 New Component: StagePromptInjector
+
+**Responsibility:** Enrich agent system prompts with deal-stage-specific formatting instructions, buyer thesis, and deal goal.
+
+**Integration point:** Called from `BaseAgent.build_system_prompt()` in file:backend/app/agents/base.py. The existing method currently returns a generic prompt. It is extended to accept `context: Optional[Dict]` and delegate to the injector.
+
+**Interface:**
+
+
+| Method   | Input                                            | Output                | Description                                                                                                  |
+| -------- | ------------------------------------------------ | --------------------- | ------------------------------------------------------------------------------------------------------------ |
+| `inject` | base_prompt, deal_stage, buyer_thesis, deal_goal | enriched prompt (str) | Prepends thesis/goal context, appends stage-specific formatting rules, adds citation discipline instructions |
+
+
+**Stage formatting rules:**
+
+- **Screening:** "Focus on go/no-go signals. Limit output to 1-page equivalent. Key metrics + 3 bullet risks + recommendation signal."
+- **Deep-Dive:** "Provide exhaustive evidence-backed analysis. Include data tables, sourced claims, risk matrix. Every quantitative claim must cite [Source: tool_name, date]."
+- **IC Memo:** "Structure using Pyramid Principle: lead with recommendation, then supporting arguments, then evidence. Use SCQA framework for executive summary."
+
+**Citation discipline (all stages):** "Every quantitative claim must be followed by [Source: tool_name, date]. If data is not available from tools, explicitly mark as [ESTIMATED] and state the estimation methodology."
+
+### 3.6 Modified Component: Iterative Tool Loop in BaseAgent
+
+**Responsibility (extended):** `generate_with_tools()` in file:backend/app/agents/base.py evolves from single-shot to multi-round.
+
+**Current flow:** Prompt → LLM → tool calls → execute tools → follow-up LLM → final output.
+
+**New flow:** Prompt → LLM → tool calls → execute tools → follow-up LLM → *check for more tool calls* → *(repeat up to 3 rounds)* → final output.
+
+**Changes:**
+
+- The follow-up LLM response is checked for additional tool call blocks (same parsing logic already exists for the initial response)
+- An `iteration` counter tracks rounds (max 3, configurable)
+- Each round's tool results accumulate into a growing `tool_context` string
+- Each tool execution calls `ProvenanceCollector.record_tool_call()` with the current `execution_round`
+- The final agent output's `tool_calls` field includes all calls across all rounds
+- All LLM calls in the loop route through `get_llm_gateway().call()` instead of direct `llm.generate()`
+
+### 3.7 Modified Component: Report Generator
+
+**Responsibility (extended):** The report generator in file:backend/app/core/reports/report_generator.py is updated across all 3 format functions (`generate_pptx`, `generate_excel`, `generate_pdf`).
+
+**Changes:**
+
+- **Remove all fabrication:** Delete all hardcoded multiplier-based projections (`rev_base * 1.15`, fake CAGR `18.5%`, mock revenue `$120M`). Replace with data from agent outputs or `[ESTIMATED]` markers.
+- **Source footnotes:** Each data point carries a `provenance_id`. The report generator queries `ProvenanceCollector.get_records(deal_id)` and generates numbered footnotes mapping to tool sources.
+- **Estimates with disclosure:** When a value has no provenance record, the Business Analyst agent's output is checked for an estimate. If present, it's rendered as: `"$120M [ESTIMATED] — Industry median EV/Revenue 8.5x applied to web-sourced ARR"`.
+- **Stage-aware formatting:** The report structure adapts to `deal_stage`: screening produces a compact 3-slide PPTX, deep-dive produces the full multi-section report, IC memo uses Pyramid Principle layout.
+- **Data consistency notes:** If `consistency_warnings` exist on the deal state, a dedicated section is appended listing all contradictions and their resolution status.
+- **Footer metadata:** Generation date, LLM providers used (from provenance records), data freshness summary (oldest data point date), data coverage percentage (from DealScore).
+
+### 3.8 Modified API Endpoints
+
+
+| Endpoint                                        | Change                                                                                        |
+| ----------------------------------------------- | --------------------------------------------------------------------------------------------- |
+| `POST /api/v1/deals`                            | Accept optional `deal_stage`, `buyer_thesis`, `deal_goal` in request body                     |
+| `GET /api/v1/deals/{id}/results`                | Include `consistency_warnings` and `provenance_summary` in response                           |
+| `GET /api/v1/deals/{id}/provenance`             | **NEW** — Query provenance records by deal, with optional filters for agent, tool, date range |
+| `GET /api/v1/deals/{id}/provenance?export=json` | **NEW** — Export full provenance chain as downloadable JSON                                   |
+| `GET /api/v1/deals/{id}/report`                 | Report now includes source footnotes, `[ESTIMATED]` markers, and stage-appropriate formatting |
+
+
+### 3.9 Component Dependency Order
+
+Implementation should follow this order, as each component depends on the one above:
+
+
+| Order | Component                                              | Depends On                                              | Issues Addressed |
+| ----- | ------------------------------------------------------ | ------------------------------------------------------- | ---------------- |
+| 1     | DealState extension + Deal model columns               | Nothing                                                 | Issues 2, 3      |
+| 2     | LLM Gateway wiring into BaseAgent                      | Nothing                                                 | Issues 1, 2      |
+| 3     | Fix agent tool bypasses (MarketResearcher, async/sync) | Gateway wiring                                          | Issue 1          |
+| 4     | ProvenanceCollector + ToolRouter interception          | Redis, PostgreSQL model                                 | Issue 9          |
+| 5     | Iterative tool loop in generate_with_tools()           | ProvenanceCollector, Gateway                            | Issues 6, 8      |
+| 6     | StagePromptInjector + agent prompt updates             | DealState extension                                     | Issue 2          |
+| 7     | HaluGate cross-agent mode + orchestrator node          | DealState extension                                     | Issue 7          |
+| 8     | OutputAdapter + DealScorer fixes                       | Agent outputs stabilized                                | Issue 4          |
+| 9     | Report Generator integrity overhaul                    | ProvenanceCollector, OutputAdapter, StagePromptInjector | Issue 5          |
+
+
+&nbsp;

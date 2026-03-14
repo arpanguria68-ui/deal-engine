@@ -20,7 +20,8 @@ class LegalAdvisorAgent(BaseAgent):
     """
 
     name = "legal_advisor"
-    description = "Analyzes legal documents and identifies legal risks"
+    description: str = "Analyzes legal documents and identifies legal risks"
+    recommended_model: str = "Gemini 1.5 Pro (Contract Analysis)"
 
     async def run(self, task: str, context: Optional[Dict] = None) -> AgentOutput:
         """
@@ -47,7 +48,17 @@ class LegalAdvisorAgent(BaseAgent):
 
         # Build analysis prompt
         prompt = self._build_analysis_prompt(task, context, legal_docs)
-        system_prompt = self._build_system_prompt()
+
+        # RL Loop: Inject historically successful patterns
+        from app.core.quality.agent_quality_store import AgentQualityStore
+
+        quality_store = AgentQualityStore()
+        await quality_store.initialize()
+        best_practices = await quality_store.get_historical_best_practices(
+            self.name, "deal_analysis"
+        )
+
+        system_prompt = self._build_system_prompt(best_practices)
 
         # Generate analysis
         response = await self.generate_with_tools(prompt, system_prompt)
@@ -152,9 +163,9 @@ Respond with structured JSON:
     "reasoning": string
 }}"""
 
-    def _build_system_prompt(self) -> str:
+    def _build_system_prompt(self, best_practices: List[str] = None) -> str:
         """Build system prompt for legal analysis"""
-        return f"""You are {self.name}, {self.description}.
+        prompt = f"""You are {self.name}, {self.description}.
 
 You are a senior M&A attorney with expertise in:
 - Corporate law and governance
@@ -165,13 +176,23 @@ You are a senior M&A attorney with expertise in:
 - Due diligence
 
 Guidelines:
-- Identify all material legal risks
-- Assess probability and impact of each risk
-- Recommend specific mitigation strategies
-- Flag deal-breaker issues
-- Cite specific contract language when relevant
-- Distinguish between standard and unusual terms
+- **CRITICAL: NEVER hallucinate clauses, legal risks, or regulatory data. You must use your provided tools to fetch real data.**
+- Use `sec_filings` or `document_search` to review actual contract language.
+- Identify all material legal risks based on retrieved documents.
+- Assess probability and impact of each risk.
+- Recommend specific mitigation strategies.
+- Flag deal-breaker issues.
+- Cite specific contract language and tool source when relevant.
+- Distinguish between standard and unusual terms.
 """
+        if best_practices:
+            prompt += (
+                "\n\nHistorical Best Practices (Learn from past high-scoring deals):\n"
+            )
+            for bp in best_practices:
+                prompt += f"- {bp}\n"
+
+        return prompt
 
     def _parse_analysis_output(self, content: str) -> Dict[str, Any]:
         """Parse legal analysis output"""

@@ -2,6 +2,7 @@
 
 import httpx
 import json
+import asyncio
 from typing import List, Dict, Any, Optional
 from dataclasses import dataclass
 from app.config import get_settings
@@ -97,6 +98,7 @@ class PageIndexClient:
             use_gemini = provider == "gemini"
 
             self._local_service = get_local_pageindex(
+                storage_dir=settings.PAGEINDEX_STORAGE_DIR,
                 openai_api_key=settings.OPENAI_API_KEY,
                 gemini_api_key=settings.GEMINI_API_KEY,
                 model=provider_model,

@@ -23,9 +23,10 @@ class InvestmentMemoAgent(BaseAgent):
     """
 
     name = "investment_memo_agent"
-    description = (
+    description: str = (
         "Generates McKinsey-grade investment memos with charts and executive summaries"
     )
+    recommended_model: str = "Gemini 1.5 Pro (Executive Writing)"
 
     async def run(self, task: str, context: Optional[Dict] = None) -> AgentOutput:
         start = datetime.utcnow()

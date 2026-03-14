@@ -1,5 +1,3 @@
-"""LangGraph Orchestrator for DealForge AI"""
-
 from typing import Dict, Any, List, Optional, Callable
 from datetime import datetime
 import asyncio
@@ -21,6 +19,7 @@ from app.orchestrator.state import (
     has_errors,
     get_error_agents,
 )
+
 from app.agents.base import get_agent_registry
 from app.agents.financial_analyst import FinancialAnalystAgent, ValuationAgent
 from app.agents.legal_advisor import LegalAdvisorAgent, ComplianceAgent
@@ -32,6 +31,16 @@ from app.agents.market_researcher import (
 )
 from app.agents.business_analyst import BusinessAnalystAgent
 from app.agents.red_team_agent import RedTeamAgent
+from app.agents.due_diligence_agent import CommercialDueDiligenceAgent
+from app.agents.investment_memo_agent import InvestmentMemoAgent
+from app.agents.treasury_agent import TreasuryCashAgent
+from app.agents.dcf_lbo_architect import DCFLBOArchitectAgent
+from app.agents.project_manager import ProjectManagerAgent
+from app.agents.compiler_agent import ReportCompilerAgent
+from app.agents.data_curator_agent import DataCuratorAgent
+from app.agents.complex_reasoning_agent import ComplexReasoningAgent
+from app.agents.report_architect_agent import ReportArchitectAgent
+from app.agents.advanced_financial_modeler import AdvancedFinancialModelerAgent
 from app.core.halugate import HaluGateEngine, HaluGateSeverity
 
 logger = structlog.get_logger()
@@ -45,6 +54,9 @@ class DealOrchestrator:
         self.config = config or self._default_config()
         self.agent_registry = get_agent_registry()
         self._register_agents()
+        # Concurrency limiter: prevents API quota exhaustion
+        max_concurrent = self.config.get("max_concurrent_agents", 4)
+        self._agent_semaphore = asyncio.Semaphore(max_concurrent)
         self.graph = self._build_graph()
 
     def _default_config(self) -> WorkflowConfig:
@@ -53,6 +65,7 @@ class DealOrchestrator:
             "max_iterations": 10,
             "timeout_seconds": 300,
             "parallel_execution": True,
+            "max_concurrent_agents": 4,
             "enabled_agents": [
                 "financial_analyst",
                 "legal_advisor",
@@ -73,6 +86,7 @@ class DealOrchestrator:
         # Financial agents
         self.agent_registry.register(FinancialAnalystAgent())
         self.agent_registry.register(ValuationAgent())
+        self.agent_registry.register(DCFLBOArchitectAgent())
 
         # Legal agents
         self.agent_registry.register(LegalAdvisorAgent())
@@ -93,10 +107,23 @@ class DealOrchestrator:
         # Output Formatting agent
         self.agent_registry.register(BusinessAnalystAgent())
 
+        # Deal lifecycle agents (used by chat pipeline)
+        self.agent_registry.register(CommercialDueDiligenceAgent())
+        self.agent_registry.register(InvestmentMemoAgent())
+        self.agent_registry.register(TreasuryCashAgent())
+        self.agent_registry.register(ProjectManagerAgent())
+        self.agent_registry.register(ReportCompilerAgent())
+        self.agent_registry.register(DataCuratorAgent())
+        self.agent_registry.register(ComplexReasoningAgent())
+        self.agent_registry.register(ReportArchitectAgent())
+        self.agent_registry.register(AdvancedFinancialModelerAgent())
+
         # HaluGate engine (not an agent, but a verification layer)
         self.halugate = HaluGateEngine()
 
-        self.logger.info("All agents registered (including Red Team + HaluGate)")
+        self.logger.info(
+            "All agents registered (including Red Team + HaluGate + Deal Lifecycle)"
+        )
 
     def _build_graph(self) -> StateGraph:
         """Build the LangGraph workflow"""
@@ -107,11 +134,17 @@ class DealOrchestrator:
         workflow.add_node("init", self._node_init)
         workflow.add_node("screening", self._node_screening)
         workflow.add_node("parallel_analysis", self._node_parallel_analysis)
+        workflow.add_node("consistency_check", self._node_consistency_check)
+        workflow.add_node("advanced_financial", self._node_advanced_financial)
+        workflow.add_node("data_curator", self._node_data_curator)
+        workflow.add_node("complex_reasoning", self._node_complex_reasoning)
+        workflow.add_node("report_architect", self._node_report_architect)
         workflow.add_node("debate", self._node_debate)
         workflow.add_node("red_team", self._node_red_team)
         workflow.add_node("scoring", self._node_scoring)
         workflow.add_node("halugate_verify", self._node_halugate_verify)
         workflow.add_node("report_formatting", self._node_report_formatting)
+        workflow.add_node("compiler", self._node_compiler)
         workflow.add_node("decision", self._node_decision)
         workflow.add_node("error_handler", self._node_error_handler)
         workflow.add_node("complete", self._node_complete)
@@ -137,18 +170,47 @@ class DealOrchestrator:
             },
         )
 
-        # From parallel analysis
+        # From parallel analysis → consistency_check
         workflow.add_conditional_edges(
             "parallel_analysis",
-            self._should_continue_to_debate,
-            {"debate": "debate", "error": "error_handler", "wait": "parallel_analysis"},
+            self._should_continue_to_advanced_financial,
+            {
+                "advanced_financial": "consistency_check",
+                "error": "error_handler",
+                "wait": "parallel_analysis",
+            },
         )
 
-        # From debate → Red Team (mandatory adversarial review)
+        # From consistency_check → advanced_financial
+        workflow.add_edge("consistency_check", "advanced_financial")
+
+        workflow.add_conditional_edges(
+            "advanced_financial",
+            self._should_continue_to_data_curator,
+            {"data_curator": "data_curator", "error": "error_handler"},
+        )
+
+        workflow.add_conditional_edges(
+            "data_curator",
+            self._should_continue_to_complex_reasoning,
+            {"complex_reasoning": "complex_reasoning", "error": "error_handler"},
+        )
+
+        workflow.add_conditional_edges(
+            "complex_reasoning",
+            self._should_continue_to_debate,
+            {"debate": "debate", "error": "error_handler"},
+        )
+
+        # From debate (Peer Review) → Red Team OR loop back for revisions
         workflow.add_conditional_edges(
             "debate",
-            self._should_continue_to_red_team,
-            {"red_team": "red_team", "error": "error_handler"},
+            self._should_continue_after_debate,
+            {
+                "red_team": "red_team",
+                "loop_back": "parallel_analysis",
+                "error": "error_handler",
+            },
         )
 
         # From Red Team → scoring OR loop back to analysis
@@ -169,20 +231,34 @@ class DealOrchestrator:
             {"halugate": "halugate_verify", "error": "error_handler"},
         )
 
-        # From HaluGate → report_formatting OR escalate
+        # From HaluGate → report_architect OR escalate
         workflow.add_conditional_edges(
             "halugate_verify",
             self._should_continue_after_halugate,
             {
-                "report_formatting": "report_formatting",
+                "report_architect": "report_architect",
                 "escalate": "complete",
                 "error": "error_handler",
             },
         )
 
-        # From report_formatting -> decision
+        # From report_architect -> report_formatting
+        workflow.add_conditional_edges(
+            "report_architect",
+            self._should_continue_to_report_formatting,
+            {"report_formatting": "report_formatting", "error": "error_handler"},
+        )
+
+        # From report_formatting -> compiler
         workflow.add_conditional_edges(
             "report_formatting",
+            self._should_continue_to_compiler,
+            {"compiler": "compiler", "error": "error_handler"},
+        )
+
+        # From compiler -> decision
+        workflow.add_conditional_edges(
+            "compiler",
             self._should_continue_to_decision,
             {"decision": "decision", "error": "error_handler"},
         )
@@ -283,15 +359,32 @@ class DealOrchestrator:
             ("market_researcher", "market_output"),
         ]
 
+        # Extract peer review feedback if we are looping back
+        debate_output = state.get("debate_output", {})
+        peer_feedback = (
+            debate_output.get("reviewer_feedback", []) if debate_output else []
+        )
+
         if self.config.get("parallel_execution", True):
             # Run agents in parallel
             tasks = []
             for agent_name, output_key in agents_to_run:
                 agent = self.agent_registry.get(agent_name)
                 if agent:
+                    # Inject specific feedback for this agent
+                    agent_specific_context = context.copy()
+                    for f in peer_feedback:
+                        if f.get("agent") == agent_name:
+                            agent_specific_context["reviewer_feedback"] = f.get(
+                                "feedback"
+                            )
+                            self.logger.info(
+                                "Injecting peer review feedback", agent=agent_name
+                            )
+
                     state = set_agent_state(state, agent_name, AgentState.RUNNING)
                     task = self._run_agent_with_timeout(
-                        agent, context, agent_name, output_key
+                        agent, agent_specific_context, agent_name, output_key
                     )
                     tasks.append(task)
 
@@ -313,11 +406,22 @@ class DealOrchestrator:
             for agent_name, output_key in agents_to_run:
                 agent = self.agent_registry.get(agent_name)
                 if agent:
+                    # Inject specific feedback for this agent
+                    agent_specific_context = context.copy()
+                    for f in peer_feedback:
+                        if f.get("agent") == agent_name:
+                            agent_specific_context["reviewer_feedback"] = f.get(
+                                "feedback"
+                            )
+                            self.logger.info(
+                                "Injecting peer review feedback", agent=agent_name
+                            )
+
                     state = set_agent_state(state, agent_name, AgentState.RUNNING)
                     try:
                         result = await agent.run(
                             f"Analyze {agent_name.replace('_', ' ')} aspects",
-                            context=context,
+                            context=agent_specific_context,
                         )
 
                         if result.success:
@@ -334,31 +438,157 @@ class DealOrchestrator:
 
         return state
 
+    async def _node_consistency_check(self, state: DealState) -> DealState:
+        """Run HaluGate cross-agent consistency check (QA Flow 3)"""
+        self.logger.info("Running consistency check", deal_id=state["deal_id"])
+
+        agent_outputs = {
+            "financial_analyst": state.get("financial_output", {}),
+            "legal_advisor": state.get("legal_output", {}),
+            "risk_assessor": state.get("risk_output", {}),
+            "market_researcher": state.get("market_output", {}),
+        }
+
+        try:
+            warnings = self.halugate.cross_agent_verify(agent_outputs, check_point=1)
+
+            if warnings:
+                existing = state.get("consistency_warnings") or []
+                existing.extend(warnings)
+                state = update_state(state, {"consistency_warnings": existing})
+
+                self.logger.warning(
+                    "Consistency warnings detected",
+                    count=len(warnings),
+                    material=[w for w in warnings if w.get("severity") == "material"],
+                )
+            else:
+                self.logger.info("Consistency check passed — no contradictions")
+
+        except Exception as e:
+            self.logger.error("Consistency check failed", error=str(e))
+
+        return state
+
     async def _run_agent_with_timeout(
         self, agent, context: Dict, agent_name: str, output_key: str
     ):
-        """Run an agent with timeout"""
-        try:
-            timeout = self.config.get("agent_timeout_seconds", 60)
+        """Run an agent with timeout, respecting the concurrency semaphore."""
+        async with self._agent_semaphore:
+            try:
+                timeout = self.config.get("agent_timeout_seconds", 60)
 
-            result = await asyncio.wait_for(
-                agent.run(
-                    f"Analyze {agent_name.replace('_', ' ')} aspects", context=context
-                ),
-                timeout=timeout,
-            )
+                result = await asyncio.wait_for(
+                    agent.run(
+                        f"Analyze {agent_name.replace('_', ' ')} aspects",
+                        context=context,
+                    ),
+                    timeout=timeout,
+                )
 
-            if result.success:
-                return agent_name, output_key, result.data
-            else:
+                if result.success:
+                    return agent_name, output_key, result.data
+                else:
+                    return agent_name, output_key, None
+
+            except asyncio.TimeoutError:
+                self.logger.error(f"Agent {agent_name} timed out")
                 return agent_name, output_key, None
+            except Exception as e:
+                self.logger.error(f"Agent {agent_name} error", error=str(e))
+                raise
 
-        except asyncio.TimeoutError:
-            self.logger.error(f"Agent {agent_name} timed out")
-            return agent_name, output_key, None
-        except Exception as e:
-            self.logger.error(f"Agent {agent_name} error", error=str(e))
-            raise
+    async def _node_advanced_financial(self, state: DealState) -> DealState:
+        """Run Advanced Financial Modeler"""
+        self.logger.info("Running Advanced Financial Modeler", deal_id=state["deal_id"])
+
+        state = update_state(state, {"current_stage": DealStage.DUE_DILIGENCE})
+
+        agent = self.agent_registry.get("advanced_financial_modeler")
+        if agent and state.get("financial_output"):
+            try:
+                ctx = state.get("context", {}).copy()
+                ctx["financial_data"] = state["financial_output"].get(
+                    "financial_metrics", {}
+                )
+
+                result = await agent.run(
+                    "Build dynamic Excel model and advanced metrics",
+                    context=ctx,
+                )
+                if result.success:
+                    state = update_state(
+                        state, {"advanced_financial_output": result.data}
+                    )
+            except Exception as e:
+                self.logger.error("Advanced Financial Modeler failed", error=str(e))
+
+        return state
+
+    async def _node_data_curator(self, state: DealState) -> DealState:
+        """Run Data Curator Agent"""
+        self.logger.info("Running Data Curator", deal_id=state["deal_id"])
+
+        agent = self.agent_registry.get("data_curator")
+        if agent:
+            try:
+                ctx = state.get("context", {}).copy()
+                ctx["agent_outputs"] = {
+                    "financial": state.get("financial_output"),
+                    "advanced_financial": state.get("advanced_financial_output"),
+                    "legal": state.get("legal_output"),
+                    "risk": state.get("risk_output"),
+                    "market": state.get("market_output"),
+                }
+
+                result = await agent.run(
+                    "Curate Data Bible",
+                    context=ctx,
+                )
+                if result.success:
+                    state = update_state(state, {"curated_data": result.data})
+            except Exception as e:
+                self.logger.error("Data Curator failed", error=str(e))
+
+        return state
+
+    async def _node_complex_reasoning(self, state: DealState) -> DealState:
+        """Run Complex Reasoning Agent"""
+        self.logger.info("Running Complex Reasoning", deal_id=state["deal_id"])
+
+        agent = self.agent_registry.get("complex_reasoning")
+        if agent and state.get("curated_data"):
+            try:
+                ctx = {"curated_data": state["curated_data"]}
+                result = await agent.run(
+                    "Execute Chain-of-Thought reasoning",
+                    context=ctx,
+                )
+                if result.success:
+                    state = update_state(state, {"reasoning_trace": result.data})
+            except Exception as e:
+                self.logger.error("Complex Reasoning failed", error=str(e))
+
+        return state
+
+    async def _node_report_architect(self, state: DealState) -> DealState:
+        """Run Report Architect Agent"""
+        self.logger.info("Running Report Architect", deal_id=state["deal_id"])
+
+        agent = self.agent_registry.get("report_architect")
+        if agent:
+            try:
+                ctx = state.get("context", {}).copy()
+                result = await agent.run(
+                    "Configure report blueprint",
+                    context=ctx,
+                )
+                if result.success:
+                    state = update_state(state, {"report_blueprint": result.data})
+            except Exception as e:
+                self.logger.error("Report Architect failed", error=str(e))
+
+        return state
 
     async def _node_debate(self, state: DealState) -> DealState:
         """Run debate/synthesis phase"""
@@ -618,6 +848,94 @@ class DealOrchestrator:
 
         return state
 
+    async def _node_compiler(self, state: DealState) -> DealState:
+        """Run the Report Compiler Agent to write physical files"""
+        self.logger.info("Running report compilation", deal_id=state["deal_id"])
+
+        compiler_agent = self.agent_registry.get("compiler_agent")
+        if compiler_agent:
+            try:
+                # Prepare all agent outputs for the compiler
+                agent_results = []
+                for k in [
+                    "financial_output",
+                    "legal_output",
+                    "risk_output",
+                    "market_output",
+                    "red_team_output",
+                ]:
+                    if state.get(k):
+                        agent_results.append(
+                            {
+                                "agent_type": k.replace("_output", ""),
+                                "data": state[k],
+                                "reasoning": state[k].get("reasoning", ""),
+                                "confidence": state[k].get("confidence", 0.5),
+                            }
+                        )
+
+                # Need core deal mapping
+                deal_info = {
+                    "id": state["deal_id"],
+                    "name": state.get("deal_name"),
+                    "target_company": state.get("context", {}).get("target_company"),
+                    "industry": state.get("context", {}).get("industry"),
+                    "final_score": state.get("final_score"),
+                    "status": "completed",
+                    "created_at": state.get("started_at"),
+                }
+
+                # Construct execution context
+                ctx = {
+                    "formats": ["pptx", "excel"],  # Default deliverables
+                    "deal_state": {
+                        "deal_name": deal_info.get("name"),
+                        "target_company": deal_info.get("target_company"),
+                        "final_score": state.get("final_score"),
+                        "agents_run": [r["agent_type"] for r in agent_results],
+                    },
+                }
+
+                # Run compilation
+                result = await compiler_agent.run(
+                    "Compile the final deliverables for this deal", context=ctx
+                )
+
+                if result.success:
+                    # Write files out to disk from Base64
+                    import base64
+                    import os
+
+                    data = result.data
+                    files = data.get("files_base64", {})
+                    out_paths = []
+
+                    from app.config import get_settings
+
+                    settings = get_settings()
+                    reports_dir = os.path.join(settings.REPORTS_DIR, state["deal_id"])
+                    os.makedirs(reports_dir, exist_ok=True)
+
+                    for ext, b64_data in files.items():
+                        path = os.path.join(
+                            reports_dir,
+                            f"{deal_info.get('target_company', 'Deal').replace(' ', '_')}_Report.{ext}",
+                        )
+                        with open(path, "wb") as f:
+                            f.write(base64.b64decode(b64_data))
+                        out_paths.append(path)
+                        self.logger.info("Report compiled and saved", file=path)
+
+                    state = update_state(
+                        state,
+                        {"compiler_output": result.data, "generated_files": out_paths},
+                    )
+
+            except Exception as e:
+                self.logger.error("Report compilation failed", error=str(e))
+
+        return state
+
     async def _node_decision(self, state: DealState) -> DealState:
         """Generate final decision"""
         self.logger.info("Generating decision", deal_id=state["deal_id"])
@@ -671,8 +989,17 @@ class DealOrchestrator:
             )
 
     async def _node_complete(self, state: DealState) -> DealState:
-        """Complete the workflow"""
+        """Complete the workflow and flush provenance to DB."""
         self.logger.info("Completing workflow", deal_id=state["deal_id"])
+
+        # Flush real-time provenance to persistent DB
+        try:
+            from app.core.provenance import get_provenance_collector
+
+            count = await get_provenance_collector().flush_to_postgres(state["deal_id"])
+            self.logger.info(f"Flushed {count} provenance records to DB")
+        except Exception as e:
+            self.logger.error("Provenance DB flush failed", error=str(e))
 
         return update_state(
             state,
@@ -698,16 +1025,34 @@ class DealOrchestrator:
             return "error"
         return "analysis"
 
+    def _should_continue_to_advanced_financial(self, state: DealState) -> str:
+        """Determine if we should proceed to Advanced Financial Modeler"""
+        if has_errors(state):
+            return "error"
+        required = ["financial_analyst", "legal_advisor", "risk_assessor"]
+        if not all_agents_completed(state, required):
+            return "wait"
+        return "advanced_financial"
+
+    def _should_continue_to_data_curator(self, state: DealState) -> str:
+        if has_errors(state):
+            return "error"
+        return "data_curator"
+
+    def _should_continue_to_complex_reasoning(self, state: DealState) -> str:
+        if has_errors(state):
+            return "error"
+        return "complex_reasoning"
+
+    def _should_continue_to_report_formatting(self, state: DealState) -> str:
+        if has_errors(state):
+            return "error"
+        return "report_formatting"
+
     def _should_continue_to_debate(self, state: DealState) -> str:
         """Determine if we should proceed to debate"""
         if has_errors(state):
             return "error"
-
-        # Check if all required agents completed
-        required = ["financial_analyst", "legal_advisor", "risk_assessor"]
-        if not all_agents_completed(state, required):
-            return "wait"
-
         return "debate"
 
     def _should_continue_to_scoring(self, state: DealState) -> str:
@@ -716,10 +1061,19 @@ class DealOrchestrator:
             return "error"
         return "scoring"
 
-    def _should_continue_to_red_team(self, state: DealState) -> str:
-        """After debate, always run Red Team (mandatory adversarial review)"""
+    def _should_continue_after_debate(self, state: DealState) -> str:
+        """After debate (Peer Review): proceed to Red Team or loop back if revisions are required"""
         if has_errors(state):
             return "error"
+
+        debate_output = state.get("debate_output", {})
+        if debate_output.get("requires_revision", False):
+            self.logger.info(
+                "Peer Review requested revisions. Looping back to analysis agents.",
+                deal_id=state["deal_id"],
+            )
+            return "loop_back"
+
         return "red_team"
 
     def _should_continue_after_red_team(self, state: DealState) -> str:
@@ -752,7 +1106,7 @@ class DealOrchestrator:
         return "halugate"
 
     def _should_continue_after_halugate(self, state: DealState) -> str:
-        """After HaluGate: proceed to decision or escalate if blocked"""
+        """After HaluGate: proceed to report_architect or escalate if blocked"""
         if has_errors(state):
             return "error"
 
@@ -761,7 +1115,13 @@ class DealOrchestrator:
             self.logger.error("HaluGate BLOCKED output — escalating")
             return "escalate"
 
-        return "decision"
+        return "report_architect"
+
+    def _should_continue_to_compiler(self, state: DealState) -> str:
+        """Determine if we should proceed to compiler"""
+        if has_errors(state):
+            return "error"
+        return "compiler"
 
     def _should_continue_to_decision(self, state: DealState) -> str:
         """Determine if we should proceed to decision"""
@@ -808,9 +1168,15 @@ class DealOrchestrator:
         # Run the graph
         # Note: LangGraph 0.0.48 uses ainvoke for async
         try:
+            run_config = {
+                "recursion_limit": self.config.get("max_iterations", 10),
+                "configurable": {"thread_id": str(deal_id)},
+            }
+            self.logger.info("Calling graph.ainvoke with config:", config=run_config)
+
             final_state = await self.graph.ainvoke(
                 initial_state,
-                config={"recursion_limit": self.config.get("max_iterations", 10)},
+                config=run_config,
             )
 
             self.logger.info(
@@ -823,7 +1189,13 @@ class DealOrchestrator:
             return final_state
 
         except Exception as e:
-            self.logger.error("Workflow failed", deal_id=deal_id, error=str(e))
+            import traceback
+
+            err_trace = traceback.format_exc()
+            print(f"CRITICAL WORKFLOW ERROR:\n{err_trace}")
+            self.logger.error(
+                "Workflow failed", deal_id=deal_id, error=str(e), traceback=err_trace
+            )
 
             return update_state(
                 initial_state,

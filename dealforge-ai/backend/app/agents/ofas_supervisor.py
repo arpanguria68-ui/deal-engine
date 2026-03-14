@@ -13,6 +13,9 @@ from typing import Dict, Any, Optional, List
 from datetime import datetime
 import structlog
 
+from typing_extensions import TypedDict
+from langgraph.graph import StateGraph, END
+
 from app.agents.base import BaseAgent, AgentOutput
 from app.orchestrator.state import (
     OFASMissionState,
@@ -189,6 +192,25 @@ DEAL_TYPE_TEMPLATES = {
 
 MAX_RETRY_CYCLES = 3
 
+# ═══════════════════════════════════════════════════════════
+#  LangGraph State Definition
+# ═══════════════════════════════════════════════════════════
+
+
+class MNAState(TypedDict):
+    deal_name: str
+    sector: str
+    market_shares: List[float]
+    financial_results: Dict[str, Any]
+    risk_assessments: Dict[str, Any]
+    esg_scores: Dict[str, Any]
+    integration_roadmap: Dict[str, Any]
+    regulatory_issues: Dict[str, Any]
+    needs_human_review: bool
+    escalation_reason: str
+    iteration_count: int
+    messages: List[str]
+
 
 class OFASSupervisorAgent(BaseAgent):
     """
@@ -200,10 +222,11 @@ class OFASSupervisorAgent(BaseAgent):
     """
 
     name = "ofas_supervisor"
-    description = (
+    description: str = (
         "OFAS Mission Control: orchestrates multi-agent financial analysis "
         "with RACI delegation, quality gates, and compliance enforcement."
     )
+    recommended_model: str = "Gemini 1.5 Pro (Orchestration)"
 
     async def run(self, task: str, context: Optional[Dict] = None) -> AgentOutput:
         """
@@ -542,3 +565,131 @@ class OFASSupervisorAgent(BaseAgent):
             ),
             confidence=0.95 if passed else 0.5,
         )
+
+    # ═══════════════════════════════════════════════════════════
+    #  LangGraph Pipeline Orchestration
+    # ═══════════════════════════════════════════════════════════
+
+    def build_mna_graph(self):
+        """Builds and compiles the LangGraph state graph for M&A execution."""
+
+        # Node Definitions
+        async def run_financials(state: MNAState) -> MNAState:
+            self.logger.info("Executing Graph Node: run_financials")
+            state["messages"].append("Ran Financial Analysis")
+            # Mocking financial output logic
+            state["financial_results"] = {"irr": 18.5, "npv": 5000000}
+            state["iteration_count"] += 1
+            return state
+
+        async def run_diligence_parallel(state: MNAState) -> MNAState:
+            self.logger.info("Executing Graph Node: run_diligence_parallel")
+            state["messages"].append("Ran Due Diligence (Tech + ESG)")
+            state["esg_scores"] = {"msci_rating": "AA", "carbon_footprint": "Low"}
+            state["risk_assessments"] = {"tech_debt": "Moderate"}
+            return state
+
+        async def run_regulatory_audit(state: MNAState) -> MNAState:
+            self.logger.info("Executing Graph Node: run_regulatory_audit")
+            state["messages"].append("Ran Regulatory & Cyber Audit")
+
+            # Simple HHI logic based on market shares
+            shares = state.get("market_shares", [])
+            hhi = sum((s * 100) ** 2 for s in shares) if shares else 1000
+
+            state["regulatory_issues"] = {"hhi_index": hhi, "cyber_risk": "Low"}
+            return state
+
+        async def reprice_deal(state: MNAState) -> MNAState:
+            self.logger.info("Executing Graph Node: reprice_deal")
+            state["messages"].append("Repricing Deal due to low IRR")
+            state["financial_results"]["irr"] = 16.0  # Improved post-repricing
+            state["iteration_count"] += 1
+            return state
+
+        async def deep_regulatory_review(state: MNAState) -> MNAState:
+            self.logger.info("Executing Graph Node: deep_regulatory_review")
+            state["messages"].append(
+                "Escalating to Deep Regulatory Review (HHI > 2500)"
+            )
+            state["needs_human_review"] = True
+            state["escalation_reason"] = "Antitrust Risk (High HHI)"
+            return state
+
+        async def human_review_checkpoint(state: MNAState) -> MNAState:
+            self.logger.info("Executing Graph Node: human_review_checkpoint")
+            state["messages"].append("Human-in-the-Loop Approval Checkpoint")
+            # In a real system, this would interrupt using graph interrupts
+            return state
+
+        async def generate_memo(state: MNAState) -> MNAState:
+            self.logger.info("Executing Graph Node: generate_memo")
+            state["messages"].append("Generated Final IC Memo")
+            return state
+
+        # Edge Routing Logic
+        def check_return_hurdle(state: MNAState) -> str:
+            irr = state.get("financial_results", {}).get("irr", 0)
+            if irr < 15.0 and state["iteration_count"] < 3:
+                return "reprice"
+            return "continue"
+
+        def check_regulatory_escalation(state: MNAState) -> str:
+            hhi = state.get("regulatory_issues", {}).get("hhi_index", 0)
+            if hhi > 2500:
+                return "escalate"
+            return "continue"
+
+        def check_human_review(state: MNAState) -> str:
+            if state.get("needs_human_review"):
+                return "review"
+            return "skip"
+
+        # Build Graph
+        builder = StateGraph(MNAState)
+
+        # Add Nodes
+        builder.add_node("run_financials", run_financials)
+        builder.add_node("reprice_deal", reprice_deal)
+        builder.add_node("run_diligence_parallel", run_diligence_parallel)
+        builder.add_node("run_regulatory_audit", run_regulatory_audit)
+        builder.add_node("deep_regulatory_review", deep_regulatory_review)
+        builder.add_node("human_review_checkpoint", human_review_checkpoint)
+        builder.add_node("generate_memo", generate_memo)
+
+        # Set Entry
+        builder.set_entry_point("run_financials")
+
+        # Financial Routing
+        builder.add_conditional_edges(
+            "run_financials",
+            check_return_hurdle,
+            {"reprice": "reprice_deal", "continue": "run_diligence_parallel"},
+        )
+        builder.add_edge("reprice_deal", "run_financials")  # Loop back after repricing
+
+        # Diligence to Regulatory
+        builder.add_edge("run_diligence_parallel", "run_regulatory_audit")
+
+        # Regulatory Routing
+        builder.add_conditional_edges(
+            "run_regulatory_audit",
+            check_regulatory_escalation,
+            {
+                "escalate": "deep_regulatory_review",
+                "continue": "human_review_checkpoint",
+            },
+        )
+        builder.add_edge("deep_regulatory_review", "human_review_checkpoint")
+
+        # Human Review Routing
+        builder.add_conditional_edges(
+            "human_review_checkpoint",
+            check_human_review,
+            {"review": "generate_memo", "skip": "generate_memo"},
+        )
+
+        builder.add_edge("generate_memo", END)
+
+        # Compile
+        return builder.compile()

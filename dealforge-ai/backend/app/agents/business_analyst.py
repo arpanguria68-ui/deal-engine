@@ -11,7 +11,8 @@ class BusinessAnalystAgent(BaseAgent):
     """
 
     name = "business_analyst"
-    description = "Synthesizes raw deal analysis into McKinsey-style executive reports with SCQA and MECE formatting."
+    description: str = "Synthesizes raw deal analysis into McKinsey-style executive reports with SCQA and MECE formatting."
+    recommended_model: str = "Gemini 1.5 Pro (Unit Economics)"
 
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
@@ -89,7 +90,7 @@ class BusinessAnalystAgent(BaseAgent):
 
         try:
             # We enforce JSON output directly from the LLM endpoint or by pure parsing
-            result = await self.llm.invoke(prompt, self.system_prompt)
+            result = await self.llm.generate(prompt, self.system_prompt)
             data = self._parse_json_result(result)
 
             return AgentOutput(
@@ -101,6 +102,31 @@ class BusinessAnalystAgent(BaseAgent):
             self.logger.error("Business Analyst synthesis failed", error=str(e))
             return AgentOutput(
                 success=False,
-                error=str(e),
+                data={"error": str(e)},
                 reasoning=f"Failed to generate structured synthesis: {str(e)}",
             )
+
+    def _parse_json_result(self, result: Any) -> Dict[str, Any]:
+        """Parse JSON response from LLM, handling potential markdown blocks."""
+        content = (
+            result.get("content", "").strip()
+            if isinstance(result, dict)
+            else str(result)
+        )
+
+        # Strip markdown code blocks if present
+        if content.startswith("```"):
+            import re
+
+            match = re.search(r"```(?:json)?\s*([\s\S]*?)\s*```", content)
+            if match:
+                content = match.group(1)
+
+        try:
+            return json.loads(content)
+        except json.JSONDecodeError:
+            # Fallback for partial/corrupted JSON
+            self.logger.warning(
+                "failed_to_parse_ba_json", content_snippet=content[:100]
+            )
+            return {}

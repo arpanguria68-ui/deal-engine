@@ -428,6 +428,96 @@ class SECFilingsTool(BaseTool):
             )
 
 
+#  6. SEC Filing Section Extractor (Advanced — sec-api.io)
+# ═══════════════════════════════════════════════════════════
+
+
+class SECExtractorTool(BaseTool):
+    """Extract specific sections (Risk Factors, MD&A, etc.) from SEC filings using sec-api.io"""
+
+    def __init__(self):
+        super().__init__(
+            name="sec_section_extractor",
+            description="Extract specific sections from a 10-K, 10-Q, or 8-K filing. Requires an SEC_API_KEY. Sections include: '1A' (Risk Factors), '7' (MD&A), '1' (Business), '2' (Properties), '3' (Legal Proceedings).",
+        )
+
+    def get_parameters_schema(self) -> Dict[str, Any]:
+        return {
+            "type": "object",
+            "properties": {
+                "url": {
+                    "type": "string",
+                    "description": "Full URL to the SEC filing HTML (from sec_filings tool)",
+                },
+                "section": {
+                    "type": "string",
+                    "description": "Section code to extract (e.g., '1A', '7', '1')",
+                    "default": "1A",
+                },
+            },
+            "required": ["url"],
+        }
+
+    async def execute(self, url: str, section: str = "1A") -> ToolResult:
+        t0 = time.time()
+        from app.config import get_settings
+
+        settings = get_settings()
+        api_key = settings.SEC_API_KEY
+
+        if not api_key:
+            return ToolResult(
+                success=False,
+                data=None,
+                error="SEC_API_KEY not configured. SECExtractorTool requires a sec-api.io API key.",
+            )
+
+        try:
+            from sec_api import ExtractorApi
+
+            extractor = ExtractorApi(api_key)
+            # SEC API Extractor is a synchronous call → run in thread
+            import asyncio
+
+            text = await asyncio.to_thread(extractor.get_section, url, section, "text")
+
+            elapsed = round((time.time() - t0) * 1000, 1)
+
+            if not text:
+                return ToolResult(
+                    success=True,
+                    data={
+                        "url": url,
+                        "section": section,
+                        "content": "No content found for this section.",
+                    },
+                    execution_time_ms=elapsed,
+                )
+
+            # Truncate if extreme, but usually sections are manageable
+            preview = text[:5000] + "..." if len(text) > 5000 else text
+
+            return ToolResult(
+                success=True,
+                data={
+                    "url": url,
+                    "section": section,
+                    "content_length": len(text),
+                    "content_preview": preview,
+                    "full_content": (
+                        text if len(text) < 100000 else text[:100000] + "\n[Truncated]"
+                    ),
+                },
+                execution_time_ms=elapsed,
+            )
+        except Exception as e:
+            return ToolResult(
+                success=False,
+                data=None,
+                error=f"SEC section extraction failed: {str(e)}",
+            )
+
+
 # ═══════════════════════════════════════════════
 #  6. Company Data (NEW — Wikipedia/Wikidata)
 # ═══════════════════════════════════════════════
@@ -675,6 +765,93 @@ class LegalClauseTool(BaseTool):
 
 
 # ═══════════════════════════════════════════════
+#  9. Report Generation (NEW - Phase 2)
+# ═══════════════════════════════════════════════
+
+
+class ReportGenerationTool(BaseTool):
+    """Generate final deliverable reports (PPTX, PDF, Excel)"""
+
+    def __init__(self):
+        super().__init__(
+            name="generate_report",
+            description="Generate a finished McKinsey-style report document (PPTX, PDF, or Excel) based on the synthesized deal data.",
+        )
+
+    def get_parameters_schema(self) -> Dict[str, Any]:
+        return {
+            "type": "object",
+            "properties": {
+                "format": {
+                    "type": "string",
+                    "enum": ["pptx", "pdf", "excel"],
+                    "description": "The format of the report to generate",
+                },
+                "deal_context": {
+                    "type": "object",
+                    "description": "Core deal context information (name, target_company, etc.)",
+                },
+                "analyst_data": {
+                    "type": "object",
+                    "description": "Synthesized analysis data to include in the report",
+                },
+                "agent_results": {
+                    "type": "array",
+                    "items": {"type": "object"},
+                    "description": "Raw results from individual agents to include in the appendix or raw data sheets",
+                },
+            },
+            "required": ["format", "deal_context", "analyst_data", "agent_results"],
+        }
+
+    async def execute(
+        self,
+        format: str,
+        deal_context: Dict,
+        analyst_data: Dict,
+        agent_results: List[Dict],
+    ) -> ToolResult:
+        try:
+            from app.core.reports.report_generator import (
+                generate_pptx,
+                generate_pdf,
+                generate_excel,
+            )
+            import base64
+
+            if format == "pptx":
+                file_bytes = generate_pptx(deal_context, analyst_data, agent_results)
+                ext = "pptx"
+            elif format == "pdf":
+                file_bytes = generate_pdf(deal_context, analyst_data, agent_results)
+                ext = "pdf"
+            elif format == "excel":
+                file_bytes = generate_excel(deal_context, analyst_data, agent_results)
+                ext = "xlsx"
+            else:
+                return ToolResult(
+                    success=False, data=None, error=f"Unsupported format: {format}"
+                )
+
+            # Return base64 encoded bytes so it can be passed via JSON safely
+            encoded = base64.b64encode(file_bytes).decode("utf-8")
+
+            return ToolResult(
+                success=True,
+                data={
+                    "message": f"Successfully generated {format.upper()} report.",
+                    "file_extension": ext,
+                    "file_bytes_base64": encoded,
+                    "size_bytes": len(file_bytes),
+                },
+            )
+        except Exception as e:
+            return ToolResult(
+                success=False, data=None, error=f"Report generation failed: {str(e)}"
+            )
+
+
+# ═══════════════════════════════════════════════
 #  Tool Router (with per-agent routing)
 # ═══════════════════════════════════════════════
 
@@ -686,6 +863,12 @@ AGENT_TOOL_MAP: Dict[str, List[str]] = {
         "sec_filings",
         "web_search",
         "company_data",
+        "peer_discovery",
+        "finance_analysis",
+        "alpha_vantage",
+        "finnhub_data",
+        "financial_datasets",
+        "filing_due_diligence",
     ],
     "market_researcher": [
         "web_search",
@@ -693,6 +876,8 @@ AGENT_TOOL_MAP: Dict[str, List[str]] = {
         "market_data",
         "company_data",
         "startup_intelligence",
+        "peer_discovery",
+        "finnhub_data",
     ],
     "legal_advisor": [
         "legal_clause_analyzer",
@@ -700,7 +885,12 @@ AGENT_TOOL_MAP: Dict[str, List[str]] = {
         "sec_filings",
         "document_search",
     ],
-    "risk_assessor": ["web_search", "company_data", "market_data"],
+    "risk_assessor": [
+        "web_search",
+        "company_data",
+        "market_data",
+        "filing_due_diligence",
+    ],
     "valuation_agent": [
         "financial_calculator",
         "sec_filings",
@@ -710,9 +900,64 @@ AGENT_TOOL_MAP: Dict[str, List[str]] = {
         "generate_football_field",
         "run_sensitivity_analysis",
         "fetch_financial_statements",
+        "peer_discovery",
+        "finance_analysis",
+        "alpha_vantage",
+        "financial_datasets",
+        "run_monte_carlo_irr",
+        "filing_due_diligence",
     ],
     "debate_moderator": ["web_search", "company_data"],
     # ── New agents ──
+    "ai_tech_diligence_agent": [
+        "ai_stack_scanner",
+        "model_defensibility_scorer",
+        "ai_value_quantifier",
+        "document_search",
+        "web_search",
+        "company_data",
+    ],
+    "esg_agent": [
+        "carbon_footprint_extractor",
+        "supply_chain_risk_flagger",
+        "esg_scorer",
+        "document_search",
+        "web_search",
+    ],
+    "integration_planner_agent": [
+        "roadmap_generator",
+        "churn_monte_carlo",
+        "synergy_tracker",
+        "document_search",
+    ],
+    "advanced_financial_modeler": [
+        "financial_calculator",
+        "document_search",
+        "sec_filings",
+        "company_data",
+        "fetch_financial_statements",
+        "finance_analysis",
+        "alpha_vantage",
+        "finnhub_data",
+        "financial_datasets",
+        "filing_due_diligence",
+        "run_monte_carlo_irr",
+    ],
+    "data_curator": [
+        "document_search",
+        "web_search",
+        "company_data",
+        "market_data",
+        "peer_discovery",
+        "finance_analysis",
+    ],
+    "complex_reasoning": [
+        "web_search",
+        "document_search",
+        "financial_calculator",
+        "finance_analysis",
+    ],
+    "report_architect": ["document_search", "generate_report"],
     "project_manager": ["web_search", "company_data", "startup_intelligence"],
     "dcf_lbo_architect": [
         "financial_calculator",
@@ -723,6 +968,10 @@ AGENT_TOOL_MAP: Dict[str, List[str]] = {
         "excel_export_tables",
         "fetch_financial_statements",
         "run_sensitivity_analysis",
+        "finance_analysis",
+        "financial_datasets",
+        "run_monte_carlo_irr",
+        "filing_due_diligence",
     ],
     "prospectus_agent": [
         "document_search",
@@ -736,13 +985,16 @@ AGENT_TOOL_MAP: Dict[str, List[str]] = {
         "company_data",
         "market_data",
         "startup_intelligence",
+        "filing_due_diligence",
     ],
     "investment_memo_agent": [
         "web_search",
         "company_data",
         "document_search",
-        "generate_ic_memo",
-        "generate_deal_deck",
+        "generate_report",
+    ],
+    "compiler_agent": [
+        "generate_report",
     ],
     "treasury_agent": ["financial_calculator", "web_search"],
     "fpa_forecasting_agent": ["financial_calculator", "market_data", "web_search"],
@@ -758,6 +1010,9 @@ AGENT_TOOL_MAP: Dict[str, List[str]] = {
     "compliance_qa_agent": [
         "document_search",
         "web_search",
+        "cyber_vuln_scanner",
+        "antitrust_hhi_calculator",
+        "privacy_auditor",
     ],
 }
 
@@ -782,6 +1037,7 @@ class ToolRouter:
         self.register_tool(CompanyDataTool())
         self.register_tool(MarketDataTool())
         self.register_tool(LegalClauseTool())
+        self.register_tool(ReportGenerationTool())
         # Startup intelligence (Crunchbase/BrightData scraping)
         try:
             from app.core.tools.startup_intelligence_tool import StartupIntelligenceTool
@@ -792,6 +1048,43 @@ class ToolRouter:
 
         if pageindex_client:
             self.register_tool(DocumentSearchTool(pageindex_client))
+
+        # Financial Data Integrations (FinanceDatabase & FinanceToolkit)
+        try:
+            from app.core.tools.finance_database_tool import PeerDiscoveryTool
+
+            self.register_tool(PeerDiscoveryTool())
+        except ImportError:
+            self.logger.warning("PeerDiscoveryTool import failed")
+
+        try:
+            from app.core.tools.finance_toolkit_tool import FinanceAnalysisTool
+
+            self.register_tool(FinanceAnalysisTool())
+        except ImportError:
+            self.logger.warning("FinanceAnalysisTool import failed")
+
+        # Additional API Integrations (Finnhub, Alpha Vantage, Financial Datasets)
+        try:
+            from app.core.tools.alpha_vantage_tool import AlphaVantageTool
+
+            self.register_tool(AlphaVantageTool())
+        except ImportError:
+            self.logger.warning("AlphaVantageTool import failed")
+
+        try:
+            from app.core.tools.finnhub_tool import FinnhubTool
+
+            self.register_tool(FinnhubTool())
+        except ImportError:
+            self.logger.warning("FinnhubTool import failed")
+
+        try:
+            from app.core.tools.financial_datasets_tool import FinancialDatasetsTool
+
+            self.register_tool(FinancialDatasetsTool())
+        except ImportError:
+            self.logger.warning("FinancialDatasetsTool import failed")
 
         # OFAS tools — Excel Model Engine + Financial Data API
         try:
@@ -818,13 +1111,79 @@ class ToolRouter:
                 FetchComparableCompaniesTool,
                 GenerateFootballFieldTool,
                 RunSensitivityAnalysisTool,
+                RunMonteCarloIRRTool,
             )
 
             self.register_tool(FetchComparableCompaniesTool())
             self.register_tool(GenerateFootballFieldTool())
             self.register_tool(RunSensitivityAnalysisTool())
+            self.register_tool(RunMonteCarloIRRTool())
+        except ImportError as e:
+            self.logger.warning(f"Valuation tools import failed: {e}")
+
+        # Phase 2 — Tech Diligence tools
+        try:
+            from app.core.tools.ai_tech_tools import (
+                AIStackScannerTool,
+                ModelDefensibilityScorerTool,
+                AIValueQuantifierTool,
+            )
+
+            self.register_tool(AIStackScannerTool())
+            self.register_tool(ModelDefensibilityScorerTool())
+            self.register_tool(AIValueQuantifierTool())
         except ImportError:
-            self.logger.warning("OFAS ValuationTools import failed")
+            self.logger.warning("OFAS AITechTools import failed")
+
+        # Phase 2 — ESG tools
+        try:
+            from app.core.tools.esg_tools import (
+                CarbonFootprintExtractorTool,
+                SupplyChainRiskFlaggerTool,
+                ESGScorerTool,
+            )
+
+            self.register_tool(CarbonFootprintExtractorTool())
+            self.register_tool(SupplyChainRiskFlaggerTool())
+            self.register_tool(ESGScorerTool())
+        except ImportError:
+            self.logger.warning("OFAS ESGTools import failed")
+
+        # Phase 3 — Regulatory & Cyber tools
+        try:
+            from app.core.tools.regulatory_tools import (
+                CyberVulnScannerTool,
+                AntitrustHHICalculatorTool,
+                PrivacyAuditorTool,
+            )
+
+            self.register_tool(CyberVulnScannerTool())
+            self.register_tool(AntitrustHHICalculatorTool())
+            self.register_tool(PrivacyAuditorTool())
+        except ImportError:
+            self.logger.warning("OFAS RegulatoryTools import failed")
+
+        # Phase 3 — Integration tools
+        try:
+            from app.core.tools.integration_tools import (
+                RoadmapGeneratorTool,
+                ChurnMonteCarloTool,
+                SynergyTrackerTool,
+            )
+
+            self.register_tool(RoadmapGeneratorTool())
+            self.register_tool(ChurnMonteCarloTool())
+            self.register_tool(SynergyTrackerTool())
+        except ImportError:
+            self.logger.warning("OFAS IntegrationTools import failed")
+
+        # Phase 5 — Filing Due Diligence (NLP change detection)
+        try:
+            from app.core.tools.filing_due_diligence import FilingDueDiligenceTool
+
+            self.register_tool(FilingDueDiligenceTool())
+        except ImportError:
+            self.logger.warning("FilingDueDiligenceTool import failed")
 
         # Phase 4 — Reporting tools
         try:
@@ -849,11 +1208,23 @@ class ToolRouter:
             ]
         return [tool.get_schema() for tool in self.tools.values()]
 
-    async def execute(self, tool_name: str, params: Dict[str, Any]) -> ToolResult:
+    async def execute(self, tool_name: str, params: Any) -> ToolResult:
         if tool_name not in self.tools:
             return ToolResult(
                 success=False, data=None, error=f"Tool '{tool_name}' not found"
             )
+
+        # Ensure params is a dict (LLMs sometimes send a JSON string)
+        if isinstance(params, str):
+            try:
+                params = json.loads(params)
+            except json.JSONDecodeError:
+                return ToolResult(
+                    success=False,
+                    data=None,
+                    error=f"Invalid JSON in tool arguments: {params}",
+                )
+
         tool = self.tools[tool_name]
         try:
             self.logger.info(
@@ -866,12 +1237,47 @@ class ToolRouter:
                 success=result.success,
                 time_ms=result.execution_time_ms,
             )
+
+            # ── Provenance capture (QA Flow 6) ──
+            pctx = getattr(self, "_provenance_context", None)
+            if pctx and pctx.get("deal_id"):
+                try:
+                    from app.core.provenance import get_provenance_collector
+
+                    provenance_id = await get_provenance_collector().record_tool_call(
+                        deal_id=pctx["deal_id"],
+                        agent_name=pctx.get("agent_name", "unknown"),
+                        tool_name=tool_name,
+                        params=params,
+                        result=(
+                            result.data if result.success else {"error": result.error}
+                        ),
+                        execution_round=pctx.get("execution_round", 1),
+                    )
+                    result.provenance_id = provenance_id
+                except Exception as e:
+                    self.logger.warning("provenance_capture_failed", error=str(e))
+
             return result
         except Exception as e:
             self.logger.error(
                 "Tool execution failed", tool_name=tool_name, error=str(e)
             )
             return ToolResult(success=False, data=None, error=str(e))
+
+    def set_provenance_context(
+        self, deal_id: str, agent_name: str, execution_round: int = 1
+    ):
+        """Set provenance capture context for subsequent tool executions."""
+        self._provenance_context = {
+            "deal_id": deal_id,
+            "agent_name": agent_name,
+            "execution_round": execution_round,
+        }
+
+    def clear_provenance_context(self):
+        """Clear provenance context after agent finishes."""
+        self._provenance_context = None
 
     async def execute_function_calls(
         self, function_calls: List[Dict]

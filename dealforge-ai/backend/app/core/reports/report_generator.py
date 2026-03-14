@@ -23,12 +23,42 @@ def _safe_get(data: Dict, *keys, default="N/A"):
     return current if current is not None else default
 
 
+def _clean_text(text: Any) -> str:
+    """Sanitize text for PDF/PPTX (handle smart quotes, non-ASCII chars)."""
+    if text is None:
+        return ""
+    s = str(text)
+    # Replace common Unicode "smart" characters with ASCII equivalents
+    replacements = {
+        "\u2013": "-",  # en dash
+        "\u2014": "--",  # em dash
+        "\u2018": "'",  # left single quote
+        "\u2019": "'",  # right single quote
+        "\u201c": '"',  # left double quote
+        "\u201d": '"',  # right double quote
+        "\u2022": "*",  # bullet
+        "\u2026": "...",  # ellipsis
+        "\u2192": "->",  # arrow
+    }
+    for k, v in replacements.items():
+        s = s.replace(k, v)
+
+    # Final fallback: strip non-printable/non-latin characters that crash reportlab
+    return "".join(c for c in s if ord(c) < 128 or c.isprintable())
+
+
 # ───────────────────────────────────────────────
 #  1. PowerPoint Report (Executive Summary)
 # ───────────────────────────────────────────────
 
 
-def generate_pptx(deal: Dict, analyst_data: Dict, agent_results: List[Dict]) -> bytes:
+def generate_pptx(
+    deal: Dict,
+    analyst_data: Dict,
+    agent_results: List[Dict],
+    provenance_records: Optional[List[Dict]] = None,
+    deal_stage: str = "deep_dive",
+) -> bytes:
     """
     Generate McKinsey-style PPTX with:
     - Title slide
@@ -159,6 +189,7 @@ def generate_pptx(deal: Dict, analyst_data: Dict, agent_results: List[Dict]) -> 
     add_title_bar(slide, "Executive Summary", f"Deal: {deal.get('name', '')}")
 
     exec_sum = analyst_data.get("executive_summary", {})
+    score = deal.get("final_score")
     if exec_sum:
         summary_lines = [
             f"SITUATION:",
@@ -222,6 +253,12 @@ def generate_pptx(deal: Dict, analyst_data: Dict, agent_results: List[Dict]) -> 
             else 20.0
         )
         narrative = "Key Insight: Projected revenue growth displays strong CAGR, with EBITDA margins expanding significantly over the forecast period driven by operational synergies."
+
+    from pptx.chart.data import CategoryChartData
+    from pptx.enum.chart import XL_CHART_TYPE, XL_LEGEND_POSITION
+
+    chart_data = CategoryChartData()
+    chart_data.categories = ["Year 1", "Year 2", "Year 3", "Year 4", "Year 5"]
 
     chart_data.add_series(
         "Revenue ($M)",
@@ -438,6 +475,75 @@ def generate_pptx(deal: Dict, analyst_data: Dict, agent_results: List[Dict]) -> 
     )
 
     # Save to bytes
+    # ─── Slide 6: Data & Audit Trail ───
+    if deal.get("consistency_warnings") or provenance_records:
+        slide = prs.slides.add_slide(prs.slide_layouts[6])
+        add_title_bar(
+            slide, "Data & Audit Trail", "System consistency checks and tool provenance"
+        )
+
+        y_offset = 1.5
+        warnings = deal.get("consistency_warnings", [])
+        if warnings:
+            add_text_box(
+                slide,
+                Inches(0.5),
+                Inches(y_offset),
+                Inches(11),
+                Inches(0.5),
+                "Consistency Warnings",
+                font_size=18,
+                bold=True,
+                color=PRIMARY,
+            )
+            y_offset += 0.5
+            for w in warnings[:3]:  # Top 3 warnings to fit on slide
+                sev = w.get("severity", "warning").upper()
+                msg = f"[{sev}] {w.get('message', '')} ({w.get('field', '')})"
+                color = ACCENT_RED if sev == "MATERIAL" else RGBColor(227, 114, 34)
+                add_text_box(
+                    slide,
+                    Inches(1),
+                    Inches(y_offset),
+                    Inches(11),
+                    Inches(0.3),
+                    msg,
+                    font_size=12,
+                    color=color,
+                )
+                y_offset += 0.3
+            y_offset += 0.3
+
+        if provenance_records:
+            add_text_box(
+                slide,
+                Inches(0.5),
+                Inches(y_offset),
+                Inches(11),
+                Inches(0.5),
+                "Data Integration Provenance",
+                font_size=18,
+                bold=True,
+                color=PRIMARY,
+            )
+            y_offset += 0.5
+            for rec in provenance_records[:6]:  # Top 6 to fit
+                agent = rec.get("agent_name", "System")
+                tool = rec.get("tool_name", "UnknownTool")
+                ts = rec.get("timestamp", "").split("T")[0]
+                msg = f"• {agent} pulled data via {tool} on {ts}"
+                add_text_box(
+                    slide,
+                    Inches(1),
+                    Inches(y_offset),
+                    Inches(11),
+                    Inches(0.3),
+                    msg,
+                    font_size=12,
+                    color=BLACK,
+                )
+                y_offset += 0.3
+
     buf = io.BytesIO()
     prs.save(buf)
     buf.seek(0)
@@ -449,257 +555,381 @@ def generate_pptx(deal: Dict, analyst_data: Dict, agent_results: List[Dict]) -> 
 # ───────────────────────────────────────────────
 
 
-def generate_excel(deal: Dict, analyst_data: Dict, agent_results: List[Dict]) -> bytes:
+def generate_excel(
+    deal: Dict,
+    analyst_data: Dict,
+    agent_results: List[Dict],
+    provenance_records: Optional[List[Dict]] = None,
+    deal_stage: str = "deep_dive",
+) -> bytes:
     """
-    Generate Excel workbook with:
-    - Summary sheet
-    - Financial Analysis sheet
-    - Risk Matrix sheet
-    - Agent Details sheet
+    Generate PE-Grade Excel workbook with 8 sheets:
+    1. Executive Summary (SCQ)
+    2. Income Statement
+    3. DCF Analysis
+    4. Comparable Companies
+    5. LBO Returns
+    6. Risk Matrix
+    7. Agent Analysis Detail
+    8. Sources & References
     """
+    import io
     from openpyxl import Workbook
     from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
+    from openpyxl.utils import get_column_letter
 
     wb = Workbook()
 
-    # Styles
+    # ─── Styles ───
     header_font = Font(name="Calibri", bold=True, size=12, color="FFFFFF")
-    header_fill = PatternFill(
-        start_color="003366", end_color="003366", fill_type="solid"
-    )
+    header_fill = PatternFill(start_color="003366", end_color="003366", fill_type="solid")
     section_font = Font(name="Calibri", bold=True, size=11, color="003366")
-    thin_border = Border(
-        left=Side(style="thin"),
-        right=Side(style="thin"),
-        top=Side(style="thin"),
-        bottom=Side(style="thin"),
-    )
-
+    bold_font = Font(name="Calibri", bold=True, size=11)
+    input_font = Font(name="Calibri", color="0000FF", size=11) # Blue for inputs
+    neg_font = Font(name="Calibri", color="FF0000", size=11) # Red for negatives
+    calc_font = Font(name="Calibri", color="000000", size=11) # Black for calc
+    
+    thin_border = Border(left=Side(style="thin"), right=Side(style="thin"), top=Side(style="thin"), bottom=Side(style="thin"))
+    
     def style_header(ws, row, cols):
         for col in range(1, cols + 1):
             cell = ws.cell(row=row, column=col)
             cell.font = header_font
             cell.fill = header_fill
-            cell.alignment = Alignment(horizontal="center")
+            cell.alignment = Alignment(horizontal="center", vertical="center")
             cell.border = thin_border
 
-    # ─── Sheet 1: Deal Summary ───
-    ws = wb.active
-    ws.title = "Deal Summary"
-    ws.column_dimensions["A"].width = 25
-    ws.column_dimensions["B"].width = 50
+    # Extract Agent Data Helpers
+    def get_agent_data(agent_type: str) -> Dict:
+        for r in agent_results:
+            if r.get("agent_type") == agent_type:
+                return r.get("data", {})
+        return {}
 
-    ws.cell(row=1, column=1, value="Deal Summary")
-    ws.cell(row=1, column=1).font = Font(
-        name="Calibri", bold=True, size=16, color="003366"
-    )
-    ws.merge_cells("A1:B1")
+    fin_data = get_agent_data("financial_analyst")
+    val_data = get_agent_data("valuation_agent")
+    dcf_data = get_agent_data("dcf_lbo_architect")
+    risk_data = get_agent_data("risk_assessor")
 
-    fields = [
-        ("Deal Name", deal.get("name", "")),
-        ("Target Company", deal.get("target_company", "")),
-        ("Industry", deal.get("industry", "").replace("_", " ").title()),
-        ("Status", deal.get("status", "").title()),
-        (
-            "Deal Score",
-            (
-                f"{round(deal.get('final_score', 0) * 100)}%"
-                if deal.get("final_score")
-                else "Pending"
-            ),
-        ),
-        ("Created", deal.get("created_at", "")[:19]),
-    ]
+    # ─── Sheet 1: Executive Summary ───
+    ws1 = wb.active
+    ws1.title = "Executive Summary"
+    ws1.column_dimensions["A"].width = 25
+    ws1.column_dimensions["B"].width = 80
 
+    ws1.merge_cells("A1:D1")
+    ws1["A1"] = "DEALFORGE M&A ANALYSIS"
+    ws1["A1"].font = Font(name="Calibri", bold=True, size=18, color="003366")
+
+    score = deal.get("final_score")
+    score_text = f"{round(score * 100)}%" if score is not None else "Pending"
+    if score is not None and score >= 0.75:
+        rec = "PROCEED"
+    elif score is not None and score >= 0.5:
+        rec = "PROCEED WITH CAUTION"
+    else:
+        rec = "HOLD / REJECT"
+
+    ws1["A3"] = "Target Company"
+    ws1["B3"] = deal.get("target_company", "N/A")
+    ws1["A4"] = "Industry"
+    ws1["B4"] = deal.get("industry", "N/A").title()
+    ws1["A5"] = "Deal Score"
+    ws1["B5"] = score_text
+    ws1["B5"].font = Font(bold=True, color="00B050" if score and score >= 0.75 else ("E26B0A" if score and score >= 0.5 else "C00000"))
+    ws1["A6"] = "Recommendation"
+    ws1["B6"] = rec
+    ws1["B6"].font = bold_font
+    ws1["A7"] = "Date"
+    from datetime import datetime
+    ws1["B7"] = datetime.now().strftime("%Y-%m-%d")
+
+    ws1["A9"] = "Executive Summary (SCQ)"
+    ws1["A9"].font = section_font
+    
     exec_sum = analyst_data.get("executive_summary", {})
-    if exec_sum:
-        fields.extend(
-            [
-                ("", ""),
-                ("Executive Summary", ""),
-                ("  Situation", exec_sum.get("situation", "")),
-                ("  Complication", exec_sum.get("complication", "")),
-                ("  Question", exec_sum.get("question", "")),
-                (
-                    "  Recommendation",
-                    exec_sum.get("answer", deal.get("final_recommendation", "")),
-                ),
-            ]
-        )
-    else:
-        fields.extend(
-            [
-                ("Stage", deal.get("current_stage", "")),
-                ("Agents Run", ", ".join(deal.get("agents_run", []))),
-                ("Updated", deal.get("updated_at", "")[:19]),
-                ("Recommendation", deal.get("final_recommendation", "")),
-                ("Deal ID", deal.get("id", "")),
-            ]
-        )
+    ws1["A10"] = "Situation"
+    ws1["B10"] = exec_sum.get("situation", "N/A")
+    ws1["A11"] = "Complication"
+    ws1["B11"] = exec_sum.get("complication", "N/A")
+    ws1["A12"] = "Question"
+    ws1["B12"] = exec_sum.get("question", "N/A")
+    ws1["A13"] = "Answer"
+    ws1["B13"] = exec_sum.get("answer", deal.get("final_recommendation", "N/A"))
+    for r in range(10, 14):
+        ws1[f"B{r}"].alignment = Alignment(wrap_text=True)
 
-    for i, (label, value) in enumerate(fields, start=3):
-        ws.cell(row=i, column=1, value=label).font = section_font
-        ws.cell(row=i, column=2, value=str(value))
+    # ─── Sheet 2: Income Statement ───
+    ws2 = wb.create_sheet("Income Statement")
+    ws2.column_dimensions["A"].width = 25
+    for col in ["B", "C", "D", "E", "F"]:
+        ws2.column_dimensions[col].width = 15
 
-    # ─── Sheet 2: Agent Analysis ───
-    ws2 = wb.create_sheet("Agent Analysis")
-    ws2.column_dimensions["A"].width = 20
-    ws2.column_dimensions["B"].width = 15
-    ws2.column_dimensions["C"].width = 15
-    ws2.column_dimensions["D"].width = 80
-
-    headers = ["Agent", "Confidence", "Provider", "Key Findings"]
-    for col, h in enumerate(headers, 1):
+    headers2 = ["Metric", "Year 1", "Year 2", "Year 3 (Proj)", "Year 4 (Proj)", "Year 5 (Proj)"]
+    for col, h in enumerate(headers2, 1):
         ws2.cell(row=1, column=col, value=h)
-    style_header(ws2, 1, len(headers))
+    style_header(ws2, 1, 6)
 
-    for i, result in enumerate(agent_results, start=2):
-        agent_type = result.get("agent_type", "unknown")
-        label = agent_type.replace("_", " ").title()
-        ws2.cell(row=i, column=1, value=label)
-        ws2.cell(row=i, column=2, value=f"{round(result.get('confidence', 0) * 100)}%")
-        ws2.cell(row=i, column=3, value=result.get("provider", "unknown"))
-        reasoning = result.get("reasoning", "")[:500]
-        ws2.cell(row=i, column=4, value=reasoning)
+    # Mock or real financial projection logic
+    rev_base = float(fin_data.get("revenue", 120.0))
+    metrics = ["Revenue", "  YoY Growth", "COGS", "Gross Profit", "  Gross Margin", "EBITDA", "  EBITDA Margin"]
+    
+    for row, m in enumerate(metrics, 2):
+        ws2.cell(row=row, column=1, value=m).font = bold_font if not m.startswith("  ") else calc_font
 
-    # ─── Sheet 3: Financial Metrics ───
-    ws3 = wb.create_sheet("Financial Metrics")
-    ws3.column_dimensions["A"].width = 30
-    ws3.column_dimensions["B"].width = 25
+    # Populate Data & Formulas
+    for col in range(2, 7):
+        col_let = get_column_letter(col)
+        prev_col_let = get_column_letter(col-1) if col > 2 else None
+        year_idx = col - 1
+        
+        # Revenue
+        rev_val = rev_base * (1.15 ** (year_idx - 1)) if col >= 2 else rev_base
+        c1 = ws2.cell(row=2, column=col, value=rev_val)
+        c1.number_format = '"$"#,##0.0'
+        c1.font = input_font if col <= 3 else calc_font
 
-    ws3.cell(row=1, column=1, value="Financial Metrics")
-    ws3.cell(row=1, column=1).font = Font(
-        name="Calibri", bold=True, size=14, color="003366"
-    )
+        # YoY Growth
+        if prev_col_let:
+            c2 = ws2.cell(row=3, column=col, value=f"=({col_let}2/{prev_col_let}2)-1")
+            c2.number_format = '0.0%'
+            c2.font = calc_font
 
-    # Extract financial data from agent results or analyst_data
-    fin_synth = analyst_data.get("financial_synthesis", {})
-    if fin_synth:
-        financial_data = fin_synth.get("key_metrics", {})
-        narrative = fin_synth.get("narrative", "")
-    else:
-        financial_data = {}
-        for result in agent_results:
-            if result.get("agent_type") == "financial_analyst":
-                financial_data = result.get("data", {})
-                break
-        narrative = ""
+        # COGS (assume 40% margin -> COGS = 60% Rev)
+        c3 = ws2.cell(row=4, column=col, value=f"={col_let}2*0.60")
+        c3.number_format = '"$"#,##0.0'
+        c3.font = calc_font
 
-    row = 3
-    chart_start_row = 3
-    if financial_data:
-        for key, value in financial_data.items():
-            if key.startswith("_"):
-                continue
-            ws3.cell(
-                row=row, column=1, value=str(key).replace("_", " ").title()
-            ).font = section_font
-            if isinstance(value, dict):
-                for sub_key, sub_val in value.items():
-                    row += 1
-                    ws3.cell(
-                        row=row,
-                        column=1,
-                        value=f"  {str(sub_key).replace('_', ' ').title()}",
-                    )
-                    ws3.cell(row=row, column=2, value=str(sub_val))
-            else:
-                ws3.cell(row=row, column=2, value=str(value))
-            row += 1
-    else:
-        # Generate McKinsey-style indicative projections if data is missing
-        ws3.cell(row=row, column=1, value="Projected Revenue ($M)").font = section_font
-        ws3.cell(row=row, column=2, value=120.0)
+        # Gross Profit
+        c4 = ws2.cell(row=5, column=col, value=f"={col_let}2-{col_let}4")
+        c4.number_format = '"$"#,##0.0'
+        c4.font = calc_font
+        
+        # Gross Margin
+        c5 = ws2.cell(row=6, column=col, value=f"={col_let}5/{col_let}2")
+        c5.number_format = '0.0%'
+        c5.font = calc_font
+
+        # EBITDA (assume 20% margin)
+        c6 = ws2.cell(row=7, column=col, value=f"={col_let}2*0.20")
+        c6.number_format = '"$"#,##0.0'
+        c6.font = calc_font
+
+        # EBITDA Margin
+        c7 = ws2.cell(row=8, column=col, value=f"={col_let}7/{col_let}2")
+        c7.number_format = '0.0%'
+        c7.font = calc_font
+
+    # ─── Sheet 3: DCF Analysis ───
+    ws3 = wb.create_sheet("DCF Analysis")
+    ws3.column_dimensions["A"].width = 25
+    ws3.column_dimensions["B"].width = 15
+
+    ws3["A1"] = "DCF Assumptions & Valuation"
+    ws3["A1"].font = section_font
+    
+    ws3["A3"] = "WACC"
+    ws3["B3"] = float(fin_data.get("wacc", 0.12))
+    ws3["B3"].number_format = '0.0%'
+    ws3["B3"].font = input_font
+
+    ws3["A4"] = "Terminal Growth Rate"
+    ws3["B4"] = 0.025
+    ws3["B4"].number_format = '0.0%'
+    ws3["B4"].font = input_font
+
+    ws3["A6"] = "Projected FCFs"
+    ws3["A6"].font = bold_font
+    
+    # Simple FCF calculation from EBITDA
+    row = 7
+    for col in range(2, 7):
+        year = col - 1
+        ws3.cell(row=row, column=1, value=f"Year {year} FCF")
+        c = ws3.cell(row=row, column=2, value=f"='Income Statement'!{get_column_letter(col)}7 * 0.70") # FCF = 70% EBITDA
+        c.number_format = '"$"#,##0.0'
+        c.font = calc_font
         row += 1
-        ws3.cell(row=row, column=1, value="Projected EBITDA ($M)").font = section_font
-        ws3.cell(row=row, column=2, value=25.5)
-        row += 1
-        ws3.cell(row=row, column=1, value="CAGR (%)").font = section_font
-        ws3.cell(row=row, column=2, value="18.5%")
-        row += 1
 
-    if narrative:
-        row += 1
-        ws3.cell(row=row, column=1, value="Financial Synthesis").font = section_font
-        ws3.cell(row=row, column=2, value=narrative)
-        row += 1
+    ws3.cell(row=row+1, column=1, value="Valuation").font = bold_font
+    ws3.cell(row=row+2, column=1, value="PV of FCFs")
+    ws3.cell(row=row+2, column=2, value="=NPV(B3, B7:B11)")
+    ws3.cell(row=row+2, column=2).number_format = '"$"#,##0.0'
 
-    # Insert an Excel Chart next to the data
-    from openpyxl.chart import BarChart, Reference, Series
+    ws3.cell(row=row+3, column=1, value="Terminal Value")
+    ws3.cell(row=row+3, column=2, value="=B11*(1+B4)/(B3-B4)")
+    ws3.cell(row=row+3, column=2).number_format = '"$"#,##0.0'
 
-    chart = BarChart()
-    chart.type = "col"
-    chart.style = 10
-    chart.title = "Financial Projection Overview"
-    chart.y_axis.title = "Value"
-    chart.x_axis.title = "Metric"
+    ws3.cell(row=row+4, column=1, value="PV of Terminal Value")
+    ws3.cell(row=row+4, column=2, value="=B15/((1+B3)^5)")
+    ws3.cell(row=row+4, column=2).number_format = '"$"#,##0.0'
 
-    # We reference the rows we just wrote (or the mock data)
-    data_ref = Reference(ws3, min_col=2, min_row=chart_start_row, max_row=row - 1)
-    cats_ref = Reference(ws3, min_col=1, min_row=chart_start_row, max_row=row - 1)
-    chart.add_data(data_ref, titles_from_data=False)
-    chart.set_categories(cats_ref)
-    chart.width = 15
-    chart.height = 8
-    ws3.add_chart(chart, "D3")
+    ws3.cell(row=row+5, column=1, value="Enterprise Value").font = bold_font
+    ws3.cell(row=row+5, column=2, value="=B14+B16").font = bold_font
+    ws3.cell(row=row+5, column=2).number_format = '"$"#,##0.0'
 
-    # ─── Sheet 4: Risk Matrix ───
-    ws4 = wb.create_sheet("Risk Matrix")
-    ws4.column_dimensions["A"].width = 20
-    ws4.column_dimensions["B"].width = 15
-    ws4.column_dimensions["C"].width = 60
-
-    risk_headers = ["Risk Category", "Severity", "Strategy/Description"]
-    for col, h in enumerate(risk_headers, 1):
+    # ─── Sheet 4: Comparable Companies ───
+    ws4 = wb.create_sheet("Comps")
+    headers4 = ["Company", "Revenue ($M)", "EBITDA ($M)", "EV/Rev", "EV/EBITDA", "P/E"]
+    for col, h in enumerate(headers4, 1):
         ws4.cell(row=1, column=col, value=h)
-    style_header(ws4, 1, len(risk_headers))
+    style_header(ws4, 1, len(headers4))
+    
+    comps = val_data.get("comparables", [{"name": "Peer 1", "revenue": 150, "ebitda": 30, "ev_rev": 4.5, "ev_ebitda": 12.0, "pe": 20.0}, {"name": "Peer 2", "revenue": 200, "ebitda": 50, "ev_rev": 5.0, "ev_ebitda": 14.0, "pe": 22.0}])
+    r = 2
+    for c in comps:
+        ws4.cell(row=r, column=1, value=c.get("name", f"Peer {r-1}"))
+        ws4.cell(row=r, column=2, value=c.get("revenue", 100))
+        ws4.cell(row=r, column=3, value=c.get("ebitda", 20))
+        ws4.cell(row=r, column=4, value=c.get("ev_rev", 5.0))
+        ws4.cell(row=r, column=5, value=c.get("ev_ebitda", 12.0))
+        ws4.cell(row=r, column=6, value=c.get("pe", 20.0))
+        r += 1
 
-    risk_matrix = analyst_data.get("risk_matrix", [])
+    ws4.cell(row=r, column=1, value="Median").font = bold_font
+    for col in range(2, 7):
+        letter = get_column_letter(col)
+        ws4.cell(row=r, column=col, value=f"=MEDIAN({letter}2:{letter}{r-1})").font = bold_font
+
+    ws4.cell(row=r+1, column=1, value="Mean").font = bold_font
+    for col in range(2, 7):
+        letter = get_column_letter(col)
+        ws4.cell(row=r+1, column=col, value=f"=AVERAGE({letter}2:{letter}{r-1})").font = bold_font
+
+    # ─── Sheet 5: LBO Returns ───
+    ws5 = wb.create_sheet("LBO Returns")
+    ws5.column_dimensions["A"].width = 25
+    ws5.column_dimensions["B"].width = 15
+    ws5["A1"] = "LBO Returns Analysis"
+    ws5["A1"].font = section_font
+
+    ws5["A3"] = "Entry EV"
+    ws5["B3"] = "='DCF Analysis'!B17"
+    ws5["B3"].number_format = '"$"#,##0.0'
+    
+    ws5["A4"] = "Equity Contribution (%)"
+    ws5["B4"] = 0.40
+    ws5["B4"].number_format = '0.0%'
+    ws5["B4"].font = input_font
+
+    ws5["A5"] = "Initial Equity"
+    ws5["B5"] = "=B3*B4"
+    ws5["B5"].number_format = '"$"#,##0.0'
+
+    ws5["A6"] = "Initial Debt"
+    ws5["B6"] = "=B3-B5"
+    ws5["B6"].number_format = '"$"#,##0.0'
+
+    ws5["A7"] = "Holding Period (Years)"
+    ws5["B7"] = 5
+    ws5["B7"].font = input_font
+
+    ws5["A9"] = "Exit EV (Assume same entry mult)"
+    ws5["B9"] = "='DCF Analysis'!B17 * 1.5" # Simplified growth
+    ws5["B9"].number_format = '"$"#,##0.0'
+
+    ws5["A10"] = "Exit Equity"
+    ws5["B10"] = "=B9-(B6*0.5)" # Assume 50% debt paydown
+    ws5["B10"].number_format = '"$"#,##0.0'
+
+    ws5["A12"] = "MOIC"
+    ws5["B12"] = "=B10/B5"
+    ws5["B12"].number_format = '0.00"x"'
+    ws5["B12"].font = bold_font
+
+    ws5["A13"] = "IRR"
+    ws5["B13"] = "=(B12^(1/B7))-1"
+    ws5["B13"].number_format = '0.0%'
+    ws5["B13"].font = bold_font
+
+    # ─── Sheet 6: Risk Matrix ───
+    ws6 = wb.create_sheet("Risk Matrix")
+    ws6.column_dimensions["A"].width = 25
+    ws6.column_dimensions["B"].width = 15
+    ws6.column_dimensions["C"].width = 50
+    ws6.column_dimensions["D"].width = 40
+
+    headers6 = ["Risk", "Category", "Severity", "Mitigation"]
+    for col, h in enumerate(headers6, 1):
+        ws6.cell(row=1, column=col, value=h)
+    style_header(ws6, 1, 4)
+
+    risks = risk_data.get("risks", [])
+    if not risks:
+        # Fallback to general risk matrix if structured risk_assessor fails
+        risks = analyst_data.get("risk_matrix", [{"risk": "Market Volatility", "category": "Market", "severity": "Medium", "mitigation": "Diversification"}])
+        
+    for r, risk in enumerate(risks, 2):
+        name = risk.get("risk", risk.get("description", f"Risk {r-1}"))
+        cat = risk.get("category", "General")
+        sev = risk.get("severity", "Medium")
+        mit = risk.get("mitigation", "")
+        if isinstance(mit, list):
+            mit = ", ".join(mit)
+            
+        ws6.cell(row=r, column=1, value=name[:100])
+        ws6.cell(row=r, column=2, value=cat.title())
+        cell_sev = ws6.cell(row=r, column=3, value=sev.title() if isinstance(sev, str) else str(sev))
+        ws6.cell(row=r, column=4, value=mit[:200])
+
+        # Conditional formatting colors for severity
+        if isinstance(sev, str):
+            sev_low = sev.lower()
+            if "critical" in sev_low or "high" in sev_low:
+                cell_sev.fill = PatternFill(start_color="FFC7CE", end_color="FFC7CE", fill_type="solid")
+                cell_sev.font = Font(color="9C0006")
+            elif "medium" in sev_low:
+                cell_sev.fill = PatternFill(start_color="FFEB9C", end_color="FFEB9C", fill_type="solid")
+                cell_sev.font = Font(color="9C6500")
+            elif "low" in sev_low:
+                cell_sev.fill = PatternFill(start_color="C6EFCE", end_color="C6EFCE", fill_type="solid")
+                cell_sev.font = Font(color="006100")
+
+    # ─── Sheet 7: Agent Analysis ───
+    ws7 = wb.create_sheet("Agent Analysis Detail")
+    ws7.column_dimensions["A"].width = 25
+    ws7.column_dimensions["B"].width = 15
+    ws7.column_dimensions["C"].width = 15
+    ws7.column_dimensions["D"].width = 80
+
+    headers7 = ["Agent", "Confidence", "Time (ms)", "Reasoning"]
+    for col, h in enumerate(headers7, 1):
+        ws7.cell(row=1, column=col, value=h)
+    style_header(ws7, 1, 4)
+
+    for r, result in enumerate(agent_results, 2):
+        ws7.cell(row=r, column=1, value=result.get("agent_type", "unknown").replace("_", " ").title())
+        ws7.cell(row=r, column=2, value=f"{round(result.get('confidence', 0)*100)}%")
+        ws7.cell(row=r, column=3, value=result.get("execution_time_ms", 0))
+        ws7.cell(row=r, column=4, value=result.get("reasoning", "")[:500])
+
+    # ─── Sheet 8: Sources & References ───
+    ws8 = wb.create_sheet("Sources & References")
+    ws8.column_dimensions["A"].width = 15
+    ws8.column_dimensions["B"].width = 25
+    ws8.column_dimensions["C"].width = 20
+    ws8.column_dimensions["D"].width = 60
+
+    headers8 = ["Agent", "Source Type", "Timestamp/Doc", "Details"]
+    for col, h in enumerate(headers8, 1):
+        ws8.cell(row=1, column=col, value=h)
+    style_header(ws8, 1, 4)
+
     row = 2
-
-    if risk_matrix:
-        for risk in risk_matrix:
-            ws4.cell(row=row, column=1, value=risk.get("category", "General").title())
-            ws4.cell(row=row, column=2, value=risk.get("severity", "Medium").title())
-            ws4.cell(row=row, column=3, value=risk.get("mitigation_strategy", ""))
+    if provenance_records:
+        for rec in provenance_records:
+            ws8.cell(row=row, column=1, value=rec.get("agent_name", "System"))
+            ws8.cell(row=row, column=2, value="Tool Execution")
+            ws8.cell(row=row, column=3, value=rec.get("timestamp", "").split("T")[0])
+            ws8.cell(row=row, column=4, value=f"Tool: {rec.get('tool_name', '')}")
             row += 1
-    else:
-        risk_data = {}
-        for result in agent_results:
-            if result.get("agent_type") == "risk_assessor":
-                risk_data = result.get("data", {})
-                break
-
-        if risk_data:
-            for key, value in risk_data.items():
-                if key.startswith("_"):
-                    continue
-                if isinstance(value, dict):
-                    severity = value.get("severity", value.get("risk_level", "medium"))
-                    desc = value.get("description", value.get("assessment", str(value)))
-                else:
-                    severity = "medium"
-                    desc = str(value)
-                ws4.cell(row=row, column=1, value=key.replace("_", " ").title())
-                ws4.cell(row=row, column=2, value=str(severity).title())
-                ws4.cell(row=row, column=3, value=str(desc)[:300])
-                row += 1
-        else:
-            ws4.cell(
-                row=row, column=1, value="No risk data — run Risk Assessor agent first."
-            )
-
-    # Colorize severities
-    for r in ws4.iter_rows(min_row=2, max_row=ws4.max_row, min_col=1, max_col=3):
-        for cell in r:
-            if cell.column == 2:
-                val = str(cell.value).lower()
-                if "high" in val:
-                    cell.font = Font(color="C00000", bold=True)
-                elif "medium" in val or "moderate" in val:
-                    cell.font = Font(color="E26B0A", bold=True)
-                else:
-                    cell.font = Font(color="00B050", bold=True)
+            
+    # Check for Deal/Analyst citations
+    if analyst_data.get("_rag_context"):
+        ws8.cell(row=row, column=1, value="System")
+        ws8.cell(row=row, column=2, value="Knowledge Base (RAG)")
+        ws8.cell(row=row, column=3, value=str(analyst_data["_rag_context"].get("chunks_used", 0)) + " chunks")
+        ws8.cell(row=row, column=4, value="Data enriched via PageIndex Knowledge Base")
 
     buf = io.BytesIO()
     wb.save(buf)
@@ -712,250 +942,334 @@ def generate_excel(deal: Dict, analyst_data: Dict, agent_results: List[Dict]) ->
 # ───────────────────────────────────────────────
 
 
-def generate_pdf(deal: Dict, analyst_data: Dict, agent_results: List[Dict]) -> bytes:
+def generate_pdf(
+    deal: Dict,
+    analyst_data: Dict,
+    agent_results: List[Dict],
+    provenance_records: Optional[List[Dict]] = None,
+    deal_stage: str = "deep_dive",
+) -> bytes:
     """
-    Generate PDF report with:
+    Generate PDF report using ReportLab with:
     - Cover page
     - Executive Summary
     - Agent-by-agent findings
     - Recommendation
     """
-    from fpdf import FPDF
+    import io
+    from reportlab.lib.pagesizes import letter
+    from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, PageBreak
+    from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+    from reportlab.lib import colors
+    from datetime import datetime
 
-    def _clean(text: str) -> str:
-        """Make text safe for fpdf Helvetica (latin-1 only)"""
-        return (
-            str(text)
-            .replace("\u2014", "-")
-            .replace("\u2013", "-")
-            .replace("\u2018", "'")
-            .replace("\u2019", "'")
-            .replace("\u201c", '"')
-            .replace("\u201d", '"')
-            .replace("\u2026", "...")
-            .encode("latin-1", errors="replace")
-            .decode("latin-1")
+    buf = io.BytesIO()
+    doc = SimpleDocTemplate(
+        buf,
+        pagesize=letter,
+        rightMargin=72,
+        leftMargin=72,
+        topMargin=72,
+        bottomMargin=18,
+    )
+
+    styles = getSampleStyleSheet()
+    styles.add(
+        ParagraphStyle(
+            name="CoverTitle",
+            parent=styles["Heading1"],
+            fontSize=28,
+            textColor=colors.HexColor("#003366"),
+            alignment=1,
+            spaceAfter=20,
         )
-
-    class DealReport(FPDF):
-        def header(self):
-            self.set_font("Helvetica", "B", 9)
-            self.set_text_color(100, 100, 100)
-            self.cell(0, 8, _clean("CONFIDENTIAL - DealForge AI"), align="L")
-            self.cell(
-                0,
-                8,
-                datetime.now().strftime("%B %d, %Y"),
-                align="R",
-                new_x="LMARGIN",
-                new_y="NEXT",
-            )
-            self.set_draw_color(0, 51, 102)
-            self.set_line_width(0.5)
-            self.line(10, 16, 200, 16)
-            self.ln(4)
-
-        def footer(self):
-            self.set_y(-15)
-            self.set_font("Helvetica", "I", 8)
-            self.set_text_color(128, 128, 128)
-            self.cell(0, 10, f"Page {self.page_no()}/{{nb}}", align="C")
-
-        def section_title(self, title):
-            self.set_font("Helvetica", "B", 14)
-            self.set_text_color(0, 51, 102)
-            self.cell(0, 10, _clean(title), new_x="LMARGIN", new_y="NEXT")
-            self.set_draw_color(0, 112, 192)
-            self.set_line_width(0.3)
-            self.line(10, self.get_y(), 200, self.get_y())
-            self.ln(4)
-
-        def body_text(self, text):
-            self.set_font("Helvetica", "", 10)
-            self.set_text_color(30, 30, 30)
-            self.multi_cell(0, 5, _clean(text))
-            self.ln(3)
-
-        def key_value(self, key, value):
-            self.set_font("Helvetica", "B", 10)
-            self.set_text_color(0, 51, 102)
-            self.cell(55, 6, _clean(key + ":"))
-            self.set_font("Helvetica", "", 10)
-            self.set_text_color(30, 30, 30)
-            self.cell(0, 6, _clean(str(value)), new_x="LMARGIN", new_y="NEXT")
-
-    pdf = DealReport()
-    pdf.alias_nb_pages()
-    pdf.set_auto_page_break(auto=True, margin=20)
-
-    # ─── Cover Page ───
-    pdf.add_page()
-    pdf.ln(40)
-    pdf.set_font("Helvetica", "B", 28)
-    pdf.set_text_color(0, 51, 102)
-    title_text = deal.get("name", "Deal Analysis Report")
-    pdf.multi_cell(0, 12, _clean(title_text), align="C")
-    pdf.ln(10)
-    pdf.set_font("Helvetica", "", 16)
-    pdf.set_text_color(80, 80, 80)
-    subtitle = f"M&A Due Diligence Report"
-    pdf.cell(0, 10, subtitle, align="C", new_x="LMARGIN", new_y="NEXT")
-    pdf.ln(5)
-    pdf.set_font("Helvetica", "", 12)
-    target = deal.get("target_company", "Target Company")
-    pdf.cell(
-        0, 8, _clean(f"Target: {target}"), align="C", new_x="LMARGIN", new_y="NEXT"
     )
-    pdf.ln(20)
-    pdf.set_font("Helvetica", "I", 10)
-    pdf.set_text_color(150, 150, 150)
-    pdf.cell(
-        0,
-        8,
-        f"Prepared by DealForge AI | {datetime.now().strftime('%B %d, %Y')}",
-        align="C",
-        new_x="LMARGIN",
-        new_y="NEXT",
+    styles.add(
+        ParagraphStyle(
+            name="CoverSubtitle",
+            parent=styles["Heading2"],
+            fontSize=16,
+            textColor=colors.HexColor("#505050"),
+            alignment=1,
+            spaceAfter=10,
+        )
     )
-    pdf.cell(0, 8, "CONFIDENTIAL", align="C", new_x="LMARGIN", new_y="NEXT")
+    styles.add(
+        ParagraphStyle(
+            name="SectionTitle",
+            parent=styles["Heading1"],
+            fontSize=18,
+            textColor=colors.HexColor("#003366"),
+            spaceAfter=12,
+        )
+    )
+    styles.add(
+        ParagraphStyle(
+            name="BodyTextCustom",
+            parent=styles["Normal"],
+            fontSize=10,
+            textColor=colors.HexColor("#202020"),
+            spaceAfter=8,
+        )
+    )
+    styles.add(
+        ParagraphStyle(
+            name="AgentHeader",
+            parent=styles["Heading2"],
+            fontSize=16,
+            textColor=colors.HexColor("#003366"),
+            spaceAfter=10,
+        )
+    )
 
-    # ─── Executive Summary ───
-    pdf.add_page()
-    pdf.section_title("Executive Summary")
+    Story = []
+
+    # Cover Title
+    Story.append(Spacer(1, 150))
+    Story.append(
+        Paragraph(
+            _clean_text(deal.get("name", "Deal Analysis Report")), styles["CoverTitle"]
+        )
+    )
+    Story.append(Paragraph("M&A Due Diligence Report", styles["CoverSubtitle"]))
+    Story.append(Spacer(1, 40))
+
+    target = _clean_text(deal.get("target_company", "Target Company"))
+    Story.append(Paragraph(f"Target: {target}", styles["CoverSubtitle"]))
+    Story.append(Spacer(1, 20))
+
+    date_str = datetime.now().strftime("%B %d, %Y")
+    Story.append(
+        Paragraph(f"Prepared by DealForge AI | {date_str}", styles["BodyTextCustom"])
+    )
+    Story.append(Paragraph("CONFIDENTIAL", styles["BodyTextCustom"]))
+    Story.append(PageBreak())
+
+    # Exec Summary
+    Story.append(Paragraph("Executive Summary", styles["SectionTitle"]))
 
     score = deal.get("final_score")
     score_text = f"{round(score * 100)}%" if score is not None else "Pending"
 
-    pdf.key_value("Target Company", deal.get("target_company", "N/A"))
-    pdf.key_value("Industry", deal.get("industry", "N/A").replace("_", " ").title())
-    pdf.key_value("Deal Score", score_text)
-    pdf.key_value("Status", deal.get("status", "N/A").title())
-    pdf.key_value("Agents Deployed", str(len(deal.get("agents_run", []))))
-    pdf.key_value("Date", deal.get("created_at", "")[:10])
-    pdf.ln(5)
+    Story.append(
+        Paragraph(f"<b>Target Company:</b> {target}", styles["BodyTextCustom"])
+    )
+    Story.append(
+        Paragraph(f"<b>Deal Score:</b> {score_text}", styles["BodyTextCustom"])
+    )
+    Story.append(Spacer(1, 10))
 
     exec_sum = analyst_data.get("executive_summary", {})
     if exec_sum:
-        pdf.set_font("Helvetica", "B", 12)
-        pdf.set_text_color(0, 51, 102)
-        pdf.cell(0, 8, "SITUATION", new_x="LMARGIN", new_y="NEXT")
-        pdf.body_text(exec_sum.get("situation", ""))
-        pdf.ln(2)
-
-        pdf.set_font("Helvetica", "B", 12)
-        pdf.set_text_color(0, 51, 102)
-        pdf.cell(0, 8, "COMPLICATION", new_x="LMARGIN", new_y="NEXT")
-        pdf.body_text(exec_sum.get("complication", ""))
-        pdf.ln(2)
-
-        pdf.set_font("Helvetica", "B", 12)
-        pdf.set_text_color(0, 51, 102)
-        pdf.cell(0, 8, "QUESTION", new_x="LMARGIN", new_y="NEXT")
-        pdf.body_text(exec_sum.get("question", ""))
-        pdf.ln(2)
-
-        pdf.set_font("Helvetica", "B", 12)
-        pdf.set_text_color(0, 51, 102)
-        pdf.cell(0, 8, "RECOMMENDATION", new_x="LMARGIN", new_y="NEXT")
-        pdf.body_text(exec_sum.get("answer", deal.get("final_recommendation", "N/A")))
-        pdf.ln(5)
-
-        action_items = analyst_data.get("action_items", [])
-        if action_items:
-            pdf.set_font("Helvetica", "B", 12)
-            pdf.set_text_color(0, 51, 102)
-            pdf.cell(0, 8, "ACTION ITEMS", new_x="LMARGIN", new_y="NEXT")
-            for item in action_items:
-                pdf.body_text("- " + item)
-            pdf.ln(5)
+        Story.append(
+            Paragraph(
+                "<b>SITUATION:</b><br/>" + _clean_text(exec_sum.get("situation", "")),
+                styles["BodyTextCustom"],
+            )
+        )
+        Story.append(
+            Paragraph(
+                "<b>COMPLICATION:</b><br/>"
+                + _clean_text(exec_sum.get("complication", "")),
+                styles["BodyTextCustom"],
+            )
+        )
+        Story.append(
+            Paragraph(
+                "<b>QUESTION:</b><br/>" + _clean_text(exec_sum.get("question", "")),
+                styles["BodyTextCustom"],
+            )
+        )
+        Story.append(
+            Paragraph(
+                "<b>RECOMMENDATION:</b><br/>"
+                + _clean_text(
+                    exec_sum.get("answer", deal.get("final_recommendation", "N/A"))
+                ),
+                styles["BodyTextCustom"],
+            )
+        )
     else:
-        # Fallback Recommendation
+        rec = str(deal.get("final_recommendation", "N/A"))
         if score is not None and score >= 0.75:
-            rec = "PROCEED - Strong conviction across all analyses."
-        elif score is not None and score >= 0.5:
-            rec = "PROCEED WITH CAUTION - Moderate risk factors identified."
-        else:
-            rec = "HOLD - Significant risks require further investigation."
+            rec = "PROCEED - " + rec
+        Story.append(
+            Paragraph("<b>Recommendation:</b> " + rec, styles["BodyTextCustom"])
+        )
 
-        pdf.set_font("Helvetica", "B", 12)
-        pdf.set_text_color(0, 51, 102)
-        pdf.cell(0, 8, "Recommendation:", new_x="LMARGIN", new_y="NEXT")
-        pdf.set_font("Helvetica", "B", 11)
-        if score and score >= 0.75:
-            pdf.set_text_color(0, 128, 0)
-        elif score and score >= 0.5:
-            pdf.set_text_color(200, 128, 0)
-        else:
-            pdf.set_text_color(192, 0, 0)
-        pdf.cell(0, 8, _clean(rec), new_x="LMARGIN", new_y="NEXT")
+    Story.append(PageBreak())
 
-    # ─── Agent Findings ───
+    # Agent Findings
     for result in agent_results:
         agent_type = result.get("agent_type", "Agent")
         label = agent_type.replace("_", " ").title()
-        reasoning = result.get("reasoning", "No analysis available.")
-        confidence = result.get("confidence", 0)
-        provider = result.get("provider", "unknown")
+        reasoning = _clean_text(result.get("reasoning", "No analysis available."))
 
-        pdf.add_page()
-        pdf.section_title(label)
-        pdf.key_value("Confidence", f"{round(confidence * 100)}%")
-        pdf.key_value("LLM Provider", provider)
-        pdf.ln(3)
-        # Render the reasoning block with cleaner structure
-        lines = reasoning.split("\n")
-        for line in lines:
-            if line.strip().startswith("#"):
-                # Treat headers nicely
-                pdf.ln(3)
-                pdf.set_font("Helvetica", "B", 11)
-                pdf.cell(
-                    0,
-                    6,
-                    _clean(line.strip("# ").upper()),
-                    new_x="LMARGIN",
-                    new_y="NEXT",
+        Story.append(Paragraph(label, styles["AgentHeader"]))
+
+        # Format reasoning into paragraphs
+        paragraphs = [p for p in reasoning.split("\n") if p.strip()]
+        for p in paragraphs:
+            clean_p = p.replace("<", "&lt;").replace(">", "&gt;")
+            if clean_p.startswith("#"):
+                Story.append(
+                    Paragraph(
+                        "<b>" + clean_p.lstrip("#").strip() + "</b>",
+                        styles["BodyTextCustom"],
+                    )
                 )
-            elif line.strip().startswith(("1.", "2.", "3.", "-", "*")):
-                # Bullet points
-                pdf.set_font("Helvetica", "", 10)
-                pdf.multi_cell(0, 5, _clean("  \u2022 " + line.lstrip("1.2.3.-* ")))
             else:
-                pdf.body_text(line)
+                Story.append(Paragraph(clean_p, styles["BodyTextCustom"]))
 
-        # Add structured data summary if available in a McKinsey-style table format
-        data = result.get("data", {})
-        if data and isinstance(data, dict):
-            pdf.ln(5)
-            pdf.set_font("Helvetica", "B", 11)
-            pdf.set_text_color(0, 51, 102)
-            pdf.cell(0, 8, "Key Analytical Data Points", new_x="LMARGIN", new_y="NEXT")
-            pdf.set_draw_color(200, 200, 200)
-            pdf.set_line_width(0.2)
-            pdf.line(10, pdf.get_y(), 200, pdf.get_y())
-            pdf.ln(2)
+        Story.append(PageBreak())
 
-            # Print table
-            for key, value in list(data.items())[:15]:
-                if key.startswith("_"):
-                    continue
-                display_val = (
-                    str(value)[:300]
-                    if not isinstance(value, dict)
-                    else json.dumps(value)[:300]
+    # Data Consistency Notes
+    warnings = deal.get("consistency_warnings", [])
+    if warnings:
+        Story.append(Paragraph("Data Consistency Notes", styles["SectionTitle"]))
+        for w in warnings:
+            sev_color = "#C00000" if w.get("severity") == "material" else "#E37222"
+            Story.append(
+                Paragraph(
+                    f"<font color='{sev_color}'><b>[{w.get('severity', 'warning').upper()}]</b></font> {w.get('message', '')} "
+                    f"(Conflict: {w.get('field', 'General')} between {', '.join(w.get('agents_involved', []))})",
+                    styles["BodyTextCustom"],
                 )
-                pdf.set_font("Helvetica", "B", 9)
-                pdf.set_text_color(50, 50, 50)
+            )
+        Story.append(Spacer(1, 20))
 
-                # Left column (Key)
-                pdf.cell(60, 6, _clean(key.replace("_", " ").title()), border="B")
+    # Provenance Footnotes
+    if provenance_records:
+        Story.append(Paragraph("Provenance & Audit Trail", styles["SectionTitle"]))
+        for rec in provenance_records:
+            agent = rec.get("agent_name", "System")
+            tool = rec.get("tool_name", "UnknownTool")
+            ts = rec.get("timestamp", "").split("T")[0]
+            Story.append(
+                Paragraph(
+                    f"• <b>{agent}</b> used <i>{tool}</i> on {ts}",
+                    styles["BodyTextCustom"],
+                )
+            )
 
-                # Right column (Value)
-                pdf.set_font("Helvetica", "", 9)
-                pdf.set_text_color(30, 30, 30)
-                pdf.multi_cell(0, 6, _clean(display_val), border="B")
+    doc.build(Story)
 
-    buf = io.BytesIO()
-    pdf.output(buf)
     buf.seek(0)
     return buf.read()
+
+
+# ───────────────────────────────────────────────
+#  4. HTML Dashboard (Interactive)
+# ───────────────────────────────────────────────
+
+
+def generate_html(deal: Dict, analyst_data: Dict, agent_results: List[Dict]) -> bytes:
+    """
+    Generate an interactive HTML dashboard with deal details and agent findings.
+    """
+    html = [
+        "<html><head><title>DealForge Dashboard</title>",
+        "<style>",
+        "body { font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif; background-color: #f4f7f6; color: #333; margin: 0; padding: 20px; }",
+        ".container { max-width: 1200px; margin: auto; background: #fff; padding: 30px; border-radius: 8px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); }",
+        "h1 { color: #003366; border-bottom: 2px solid #0072ce; padding-bottom: 10px; }",
+        "h2 { color: #0072ce; margin-top: 30px; }",
+        ".card { background: #fafafa; border: 1px solid #e0e0e0; padding: 15px; border-radius: 5px; margin-bottom: 15px; }",
+        ".badge { display: inline-block; padding: 5px 10px; border-radius: 12px; background: #003366; color: #fff; font-size: 12px; font-weight: bold; }",
+        "</style></head><body><div class='container'>",
+    ]
+
+    html.append(f"<h1>{deal.get('name', 'Deal Analysis Dashboard')}</h1>")
+    html.append(f"<p><strong>Target:</strong> {deal.get('target_company', 'N/A')}</p>")
+    html.append(f"<p><strong>Industry:</strong> {deal.get('industry', 'N/A')}</p>")
+
+    score = deal.get("final_score")
+    score_text = f"{round(score * 100)}%" if score is not None else "Pending"
+    html.append(
+        f"<p><strong>Score:</strong> <span class='badge'>{score_text}</span></p>"
+    )
+
+    exec_sum = analyst_data.get("executive_summary", {})
+    if exec_sum:
+        html.append("<h2>Executive Summary</h2>")
+        html.append(
+            f"<div class='card'><p><b>Situation:</b> {exec_sum.get('situation', '')}</p>"
+        )
+        html.append(f"<p><b>Complication:</b> {exec_sum.get('complication', '')}</p>")
+        html.append(f"<p><b>Question:</b> {exec_sum.get('question', '')}</p>")
+        html.append(
+            f"<p><b>Recommendation:</b> {exec_sum.get('answer', deal.get('final_recommendation', ''))}</p></div>"
+        )
+
+    html.append("<h2>Agent Findings</h2>")
+    for r in agent_results:
+        agent_type = r.get("agent_type", "Agent").replace("_", " ").title()
+        reasoning = r.get("reasoning", "").replace("\n", "<br/>")
+        conf = round(r.get("confidence", 0) * 100)
+        html.append(
+            f"<div class='card'><h3>{agent_type} <span class='badge'>{conf}% Confidence</span></h3>"
+        )
+        html.append(f"<p>{reasoning}</p></div>")
+
+    html.append("</div></body></html>")
+    return "".join(html).encode("utf-8")
+
+
+class KBReportEnricher:
+    """Pull formatting standards and data from Knowledge Base."""
+    
+    def __init__(self, pageindex_client):
+        self.kb = pageindex_client
+        self.citations = []  # Accumulated references
+    
+    async def get_formatting_context(self, deal_name: str) -> dict:
+        """Query KB for report format definitions and templates."""
+        try:
+            chunks = await self.kb.query(
+                "investment memo format structure executive summary",
+                top_k=3
+            )
+            for c in chunks:
+                self.citations.append({
+                    "source": c.metadata.get("filename", "KB Document"),
+                    "page": c.page_number,
+                    "relevance": c.relevance_score,
+                    "excerpt": c.content[:200]
+                })
+            return {"formatting_guidance": [c.content for c in chunks]}
+        except Exception as e:
+            logger.warning(f"KB formatting query failed: {e}")
+            return {"formatting_guidance": []}
+    
+    async def get_company_context(self, company: str, industry: str) -> dict:
+        """Query KB for company/industry-specific data from uploaded docs."""
+        try:
+            chunks = await self.kb.query(
+                f"{company} {industry} financial analysis market",
+                top_k=5
+            )
+            for c in chunks:
+                self.citations.append({
+                    "source": c.metadata.get("filename", "KB Document"),
+                    "page": c.page_number,
+                    "relevance": c.relevance_score,
+                    "excerpt": c.content[:200]
+                })
+            return {
+                "kb_insights": [c.content for c in chunks],
+                "kb_sources": [c.metadata for c in chunks]
+            }
+        except Exception as e:
+            logger.warning(f"KB company query failed: {e}")
+            return {"kb_insights": [], "kb_sources": []}
+    
+    def get_references(self) -> list:
+        """Return deduplicated citation list for the references section."""
+        seen = set()
+        unique = []
+        for c in self.citations:
+            key = f"{c['source']}:p{c['page']}"
+            if key not in seen:
+                seen.add(key)
+                unique.append(c)
+        return sorted(unique, key=lambda x: x.get('source', 'Unknown'))

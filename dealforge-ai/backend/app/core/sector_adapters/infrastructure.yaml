@@ -1,0 +1,17 @@
+sector: infrastructure
+emphasis:
+  - agent: dcf_lbo_architect
+    weight: 1.0
+  - agent: risk_assessor
+    weight: 0.9
+  - agent: esg_agent
+    weight: 0.8
+custom_prompts:
+  financial_analyst: "Focus on capital expenditure schedules, maintenance vs. growth CapEx, and long-term contracted revenues."
+  dcf_lbo_architect: "Build long-duration, highly levered models. Ensure robust sensitivity modeling on interest rates using Hull-White models, as WACC shifts deeply impact NPV."
+  risk_assessor: "Evaluate regulatory risk, long-term tariff structures, and macroeconomic inflation linkage to revenue."
+checklists:
+  - "Government concession and contract lifespans"
+  - "Regulatory changes affecting tariffs"
+  - "Interest rate and inflation hedging strategies"
+  - "Physical climate risk to core assets"

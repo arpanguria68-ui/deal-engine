@@ -2,6 +2,7 @@
 
 from app.core.llm.gemini_client import GeminiClient, OpenAIClient, MistralClient
 from app.core.llm.local_llm_client import OllamaClient, LMStudioClient
+from app.core.llm.nvidia_client import NvidiaClient
 from app.config import get_settings
 import structlog
 
@@ -23,6 +24,11 @@ def get_llm_client(provider=None):
         return LMStudioClient()
     elif provider == "gemini":
         return GeminiClient()
+    elif provider == "nvidia":
+        return NvidiaClient()
+    elif provider == "vertex":
+        # Vertex AI uses the same underlying Gemini logic but different auth/endpoint
+        return GeminiClient(provider="vertex")
     else:
         logger.warning(
             f"Unknown LLM provider '{provider}', falling back to Gemini",
@@ -37,5 +43,6 @@ __all__ = [
     "MistralClient",
     "OllamaClient",
     "LMStudioClient",
+    "NvidiaClient",
     "get_llm_client",
 ]

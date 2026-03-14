@@ -15,16 +15,26 @@ class OllamaClient:
     def __init__(self, model: Optional[str] = None, base_url: Optional[str] = None):
         settings = get_settings()
         url = base_url or getattr(settings, "OLLAMA_BASE_URL", "http://localhost:11434")
-        # Removed aggressive host.docker.internal replacement to support native uvicorn runs
+
+        import os
+
+        if os.path.exists("/.dockerenv") or os.environ.get("RUNNING_IN_DOCKER"):
+            url = url.replace("localhost", "host.docker.internal").replace(
+                "127.0.0.1", "host.docker.internal"
+            )
+
         self.base_url = url.rstrip("/")
         self.model = model or getattr(settings, "OLLAMA_MODEL", "llama3")
         self.client = httpx.AsyncClient(timeout=120.0)
+        self.provider = "ollama"
+        self.max_context = 8000
 
     async def generate(
         self,
         prompt: str,
         system_prompt: Optional[str] = None,
         tools: Optional[List[Dict]] = None,
+        **kwargs,
     ) -> Dict[str, Any]:
         """Generate using Ollama Chat API"""
         messages = []
@@ -37,7 +47,7 @@ class OllamaClient:
             "messages": messages,
             "stream": False,
             "options": {
-                "temperature": 0.7,
+                "temperature": kwargs.get("temperature", 0.7),
             },
         }
 
@@ -85,19 +95,32 @@ class LMStudioClient:
         url = base_url or getattr(
             settings, "LMSTUDIO_BASE_URL", "http://localhost:1234/v1"
         )
-        # Removed aggressive host.docker.internal replacement to support native uvicorn runs
-        self.base_url = url.rstrip("/")
+        url = url.rstrip("/")
+        if not url.endswith("/v1"):
+            url = f"{url}/v1"
+
+        import os
+
+        if os.path.exists("/.dockerenv") or os.environ.get("RUNNING_IN_DOCKER"):
+            url = url.replace("localhost", "host.docker.internal").replace(
+                "127.0.0.1", "host.docker.internal"
+            )
+
+        self.base_url = url
         # Model name often doesn't matter for LM Studio as it uses the loaded model, but we pass it anyway
         self.model = model or getattr(settings, "LMSTUDIO_MODEL", "local-model")
 
         # Initialize AsyncOpenAI with local LM Studio URL and dummy key
         self.client = AsyncOpenAI(base_url=self.base_url, api_key="lm-studio")
+        self.provider = "lmstudio"
+        self.max_context = 12000
 
     async def generate(
         self,
         prompt: str,
         system_prompt: Optional[str] = None,
         tools: Optional[List[Dict]] = None,
+        **kwargs,
     ) -> Dict[str, Any]:
         """Generate using LM Studio Local Inference Server"""
         messages = []
@@ -110,8 +133,8 @@ class LMStudioClient:
         params = {
             "model": self.model,
             "messages": messages,
-            "temperature": 0.7,
-            "max_tokens": 12000,
+            "temperature": kwargs.get("temperature", 0.7),
+            "max_tokens": kwargs.get("max_tokens", 12000),
         }
 
         # Note: Many local models in LM Studio don't support tool calling natively,

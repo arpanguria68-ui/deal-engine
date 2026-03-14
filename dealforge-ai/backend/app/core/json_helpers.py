@@ -1,18 +1,22 @@
 import json
 import re
 import structlog
-from typing import Dict, Any
+from typing import Dict, Any, Union
 
 logger = structlog.get_logger()
 
 
-def extract_and_parse_json(content: str) -> Dict[str, Any]:
+def extract_and_parse_json(content: str) -> Union[Dict[str, Any], list, str]:
     """
     Robustly extract and parse JSON from LLM outputs, especially local LLMs
     which often append conversational text or trailing commas.
+    Also strips <think> blocks from reasoning models.
     """
     if not content:
         return {}
+
+    # Strip reasoning tags (DeepSeek R1 etc)
+    content = re.sub(r"<think>.*?</think>", "", content, flags=re.DOTALL)
 
     # Extract JSON block
     if "```json" in content:
@@ -34,10 +38,26 @@ def extract_and_parse_json(content: str) -> Dict[str, Any]:
         return json.loads(json_str)
     except json.JSONDecodeError as e:
         # Fallback: substring extraction
-        start = json_str.find("{")
-        end = json_str.rfind("}")
-        if start != -1 and end != -1 and end > start:
-            clean_str = json_str[start : end + 1]
+        start_dict = json_str.find("{")
+        end_dict = json_str.rfind("}")
+
+        start_list = json_str.find("[")
+        end_list = json_str.rfind("]")
+
+        # Determine if it's more likely a list or dict based on boundaries
+        if (
+            start_list != -1
+            and end_list > start_list
+            and (start_dict == -1 or start_list < start_dict)
+        ):
+            clean_str = json_str[start_list : end_list + 1]
+            try:
+                return json.loads(clean_str)
+            except json.JSONDecodeError:
+                pass
+
+        if start_dict != -1 and end_dict > start_dict:
+            clean_str = json_str[start_dict : end_dict + 1]
             try:
                 return json.loads(clean_str)
             except json.JSONDecodeError:

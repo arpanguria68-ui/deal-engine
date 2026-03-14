@@ -30,7 +30,8 @@ class ComplianceQAAgent(BaseAgent):
     """
 
     name = "compliance_qa_agent"
-    description = "Automated compliance quality assurance — validates deliverables before IC submission"
+    description: str = "Automated compliance quality assurance — validates deliverables before IC submission"
+    recommended_model: str = "Gemini 1.5 Pro (Regulatory Compliance)"
 
     # Mandatory IC memo sections
     MANDATORY_SECTIONS = [
@@ -57,9 +58,11 @@ class ComplianceQAAgent(BaseAgent):
                 return self._validate_model(context, start)
             elif action == "validate_deck":
                 return self._validate_deck(context, start)
+            elif action == "cyber_regulatory_audit":
+                return await self._run_cyber_regulatory_audit(task, context, start)
             else:
                 # Full QA — validate everything
-                return await self._full_qa(context, start)
+                return await self._full_qa(task, context, start)
 
         except Exception as e:
             self.logger.error("compliance_qa_error", error=str(e))
@@ -282,7 +285,65 @@ class ComplianceQAAgent(BaseAgent):
             execution_time_ms=elapsed,
         )
 
-    async def _full_qa(self, context: Dict, start: datetime) -> AgentOutput:
+    async def _run_cyber_regulatory_audit(
+        self, task: str, context: Dict, start: datetime
+    ) -> AgentOutput:
+        """Execute the new AI-driven Cyber and Regulatory tools"""
+
+        system_prompt = """You are a Senior Regulatory & Cybersecurity Compliance Auditor.
+Your goal is to audit the Target Company for critical cyber vulnerabilities, privacy (GDPR) exposures, 
+and antitrust risk (HHI Index).
+
+ANALYSIS FRAMEWORK:
+1. Cybersecurity Vulnerabilities
+   - Detect SOC2 gaps, previous breaches, or ransomware risks.
+2. Market Concentration / Antitrust
+   - Calculate HHI based on the market shares provided.
+3. Privacy & Data Localization
+   - Flag cross-border data transfer issues (Schrems II) and GDPR compliance.
+
+Available tools:
+- cyber_vuln_scanner
+- antitrust_hhi_calculator 
+- privacy_auditor
+- document_search
+- web_search
+
+OUTPUT: Respond with a comprehensive JSON containing your audit findings."""
+
+        prompt = f"TASK: Cyber/Regulatory Audit - {task}\n\n"
+        if context:
+            safe_ctx = {k: v for k, v in context.items() if k != "action"}
+            prompt += f"CONTEXT: {json.dumps(safe_ctx, default=str)[:2000]}\n\n"
+
+        prompt += """Respond with JSON:
+{
+    "cybersecurity_audit": {"vulnerabilities_detected": [], "remediation_cost": 0, "risk_level": "..."},
+    "antitrust_analysis": {"calculated_hhi": 0.0, "risk_classification": "...", "clearance_probability": "..."},
+    "privacy_gdpr_audit": {"findings": [], "status": "Failed|Passed"},
+    "recommendation": "proceed|caution|reject",
+    "confidence_score": 0.8,
+    "reasoning": "..."
+}"""
+
+        result = await self.generate_with_tools(prompt, system_prompt=system_prompt)
+        content = result.get("content", "")
+
+        from app.core.json_helpers import extract_and_parse_json
+
+        analysis = extract_and_parse_json(content) or {"analysis": content}
+
+        elapsed = (datetime.utcnow() - start).total_seconds() * 1000
+        return AgentOutput(
+            success=True,
+            data=analysis,
+            reasoning=analysis.get("reasoning", "Completed Cyber & Regulatory audit."),
+            confidence=analysis.get("confidence_score", 0.80),
+            execution_time_ms=elapsed,
+            tool_calls=result.get("tool_calls"),
+        )
+
+    async def _full_qa(self, task: str, context: Dict, start: datetime) -> AgentOutput:
         """Run all validations"""
         results = {}
 
@@ -297,6 +358,10 @@ class ComplianceQAAgent(BaseAgent):
         if context.get("deck_path"):
             deck_result = self._validate_deck(context, start)
             results["deck"] = deck_result.data
+
+        if context.get("regulatory_text") or context.get("market_shares"):
+            cyber_result = await self._run_cyber_regulatory_audit(task, context, start)
+            results["cyber_regulatory"] = cyber_result.data
 
         all_passed = all(r.get("passed", True) for r in results.values())
         total_issues = sum(r.get("issue_count", 0) for r in results.values())

@@ -1,0 +1,17 @@
+sector: consumer
+emphasis:
+  - agent: valuation_agent
+    weight: 1.0
+  - agent: due_diligence_agent
+    weight: 0.9
+  - agent: market_researcher
+    weight: 0.8
+custom_prompts:
+  financial_analyst: "Analyze same-store sales growth, gross margin trends, and inventory turnover. Highlight seasonality impacts."
+  valuation_agent: "Incorporate brand equity valuation methods, and closely examine precedent transactions in the retail/CPG space."
+  due_diligence_agent: "Investigate supply chain resilience, supplier concentration risk, and direct-to-consumer (DTC) channel mix."
+checklists:
+  - "Brand sentiment and reputation monitoring"
+  - "Supply chain logistics and tariff exposure"
+  - "Omnichannel strategy and e-commerce penetration"
+  - "Consumer cyclical sensitivity (recession risk)"

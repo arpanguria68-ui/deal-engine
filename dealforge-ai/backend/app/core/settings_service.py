@@ -71,6 +71,15 @@ class SettingsService:
             "mistral_api_key": "",
             # Model selections
             "gemini_model": "",
+            # NVIDIA
+            "nvidia_api_key": "",
+            "nvidia_base_url": "https://integrate.api.nvidia.com/v1",
+            "nvidia_model": "z-ai/glm5",
+            # Vertex AI
+            "vertex_api_key": "",
+            "vertex_project_id": "",
+            "vertex_location": "us-central1",
+            "vertex_model": "gemini-1.5-flash-002",
             "openai_model": "",
             "mistral_model": "",
             # Local LLMs
@@ -84,6 +93,7 @@ class SettingsService:
             "agent_routing": {
                 "financial_analyst": "gemini",
                 "valuation_agent": "gemini",
+                "dcf_lbo_architect": "gemini",
                 "legal_advisor": "gemini",
                 "risk_assessor": "gemini",
                 "debate_moderator": "gemini",
@@ -92,6 +102,17 @@ class SettingsService:
                 "compliance_agent": "ollama",
                 "scoring_agent": "ollama",
                 "pageindex": "gemini",
+                "advanced_financial_modeler": "gemini",
+                "complex_reasoning": "gemini",
+                "data_curator": "gemini",
+                "report_architect": "gemini",
+                "due_diligence_agent": "gemini",
+                "investment_memo_agent": "gemini",
+                "red_team": "gemini",
+                "business_analyst": "gemini",
+                "esg_agent": "ollama",
+                "integration_planner_agent": "gemini",
+                "project_manager": "gemini"
             },
             # RAG
             "pageindex_mode": "local",
@@ -112,6 +133,10 @@ class SettingsService:
             "serper_api_key": "",
             "searxng_instance_url": "",
             "searxng_api_key": "",
+            "fmp_api_key": "",
+            "financial_datasets_api_key": "",
+            "alpha_vantage_api_key": "",
+            "finnhub_api_key": "",
         }
 
     def get_all(self) -> Dict[str, Any]:
@@ -140,7 +165,7 @@ class SettingsService:
                 from app.core.llm.llm_gateway import get_llm_gateway, VendorLimits
 
                 gw = get_llm_gateway()
-                for vendor in ["gemini", "openai", "mistral"]:
+                for vendor in ["gemini", "openai", "mistral", "nvidia"]:
                     rpm = gateway_cfg.get(f"{vendor}_max_rpm")
                     tpm = gateway_cfg.get(f"{vendor}_max_tpm")
                     if rpm or tpm:
@@ -164,6 +189,10 @@ class SettingsService:
             # Update environment-style settings for LLM clients
             api_key_map = {
                 "gemini_api_key": "GEMINI_API_KEY",
+                "vertex_api_key": "VERTEX_API_KEY",
+                "vertex_project_id": "VERTEX_PROJECT_ID",
+                "vertex_location": "VERTEX_LOCATION",
+                "vertex_model": "VERTEX_MODEL",
                 "openai_api_key": "OPENAI_API_KEY",
                 "mistral_api_key": "MISTRAL_API_KEY",
                 "gemini_model": "GEMINI_MODEL",
@@ -171,10 +200,18 @@ class SettingsService:
                 "mistral_model": "MISTRAL_MODEL",
                 "ollama_base_url": "OLLAMA_BASE_URL",
                 "ollama_model": "OLLAMA_MODEL",
+                "ollama_model": "OLLAMA_MODEL",
                 "lmstudio_base_url": "LMSTUDIO_BASE_URL",
                 "lmstudio_model": "LMSTUDIO_MODEL",
+                "nvidia_api_key": "NVIDIA_API_KEY",
+                "nvidia_base_url": "NVIDIA_BASE_URL",
+                "nvidia_model": "NVIDIA_MODEL",
                 "default_llm_provider": "DEFAULT_LLM_PROVIDER",
                 "pageindex_mode": "PAGEINDEX_MODE",
+                "fmp_api_key": "FMP_API_KEY",
+                "financial_datasets_api_key": "FINANCIAL_DATASETS_API_KEY",
+                "alpha_vantage_api_key": "ALPHA_VANTAGE_API_KEY",
+                "finnhub_api_key": "FINNHUB_API_KEY",
             }
             for ui_key, env_key in api_key_map.items():
                 val = self._settings.get(ui_key, "")

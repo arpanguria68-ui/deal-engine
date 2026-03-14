@@ -5,6 +5,7 @@ MCP Tools:
 - fetch_comparable_companies: Identify peers and compute trading multiples
 - generate_football_field: Populate template and generate valuation range chart
 - run_sensitivity_analysis: 2D sensitivity tables (WACC × growth, multiple × margin)
+- run_monte_carlo_irr: Stochastic simulation of M&A synergies and IRR using OU models
 """
 
 import json
@@ -112,7 +113,7 @@ class FetchComparableCompaniesTool(BaseTool):
             "required": ["ticker", "sector"],
         }
 
-    def execute(
+    async def execute(
         self,
         ticker: str = "",
         sector: str = "technology",
@@ -326,7 +327,7 @@ class GenerateFootballFieldTool(BaseTool):
             "required": ["ticker", "valuation_ranges"],
         }
 
-    def execute(
+    async def execute(
         self,
         ticker: str = "",
         valuation_ranges: Optional[Dict] = None,
@@ -511,7 +512,7 @@ class RunSensitivityAnalysisTool(BaseTool):
             ],
         }
 
-    def execute(
+    async def execute(
         self,
         analysis_type: str = "dcf_wacc_growth",
         base_inputs: Optional[Dict] = None,
@@ -656,3 +657,108 @@ class RunSensitivityAnalysisTool(BaseTool):
         if not values:
             return None
         return min(range(len(values)), key=lambda i: abs(values[i] - target))
+
+
+# ═══════════════════════════════════════════════
+#  4. Stochastic Monte Carlo IRR
+# ═══════════════════════════════════════════════
+
+
+class RunMonteCarloIRRTool(BaseTool):
+    """
+    Run Monte Carlo simulation for M&A IRR utilizing Stochastic Simulation Engine.
+    Uses mean-reverting synergy fading (Ornstein-Uhlenbeck).
+    """
+
+    def __init__(self):
+        super().__init__(
+            name="run_monte_carlo_irr",
+            description=(
+                "Run a Monte Carlo IRR simulation using advanced stochastic models. "
+                "Calculates probabilities of achieving target IRRs taking into account "
+                "Ornstein-Uhlenbeck synergy fade execution risk."
+            ),
+        )
+
+    def get_parameters_schema(self) -> Dict:
+        return {
+            "type": "object",
+            "properties": {
+                "entry_ebitda": {
+                    "type": "number",
+                    "description": "Target's initial baseline EBITDA (annual)",
+                },
+                "price": {
+                    "type": "number",
+                    "description": "Upfront purchase price",
+                },
+                "syn_target": {
+                    "type": "number",
+                    "description": "Target synergies in Year 0",
+                },
+                "kappa": {
+                    "type": "number",
+                    "description": "Ornstein-Uhlenbeck speed of mean reversion (fade speed), default 0.5",
+                    "default": 0.5,
+                },
+                "theta_pct": {
+                    "type": "number",
+                    "description": "Long-term sustainable synergies as % of target, default 0.5 (50%)",
+                    "default": 0.5,
+                },
+                "sigma": {
+                    "type": "number",
+                    "description": "Execution risk volatility, default 2.0",
+                    "default": 2.0,
+                },
+                "years": {
+                    "type": "integer",
+                    "description": "Projection years, default 5",
+                    "default": 5,
+                },
+            },
+            "required": ["entry_ebitda", "price", "syn_target"],
+        }
+
+    async def execute(
+        self,
+        entry_ebitda: float,
+        price: float,
+        syn_target: float,
+        kappa: float = 0.5,
+        theta_pct: float = 0.5,
+        sigma: float = 2.0,
+        years: int = 5,
+        **kwargs,
+    ) -> ToolResult:
+        try:
+            from app.core.tools.stochastic_engine import StochasticEngine
+
+            engine = StochasticEngine(n_sim=5000)  # Slightly lower sim count for speed
+            result = engine.run_irr_monte_carlo(
+                entry_ebitda=entry_ebitda,
+                price=price,
+                syn_target=syn_target,
+                kappa=kappa,
+                theta_pct=theta_pct,
+                sigma=sigma,
+                T=years,
+            )
+
+            # Format the percent numbers for easy reading
+            formatted_res = {
+                "mean_irr": f"{result['mean_irr'] * 100:.2f}%",
+                "median_irr": f"{result['median_irr'] * 100:.2f}%",
+                "10th_percentile_irr": f"{result['p10_irr'] * 100:.2f}%",
+                "90th_percentile_irr": f"{result['p90_irr'] * 100:.2f}%",
+                "prob_above_15pct": f"{result['prob_above_15pct'] * 100:.1f}%",
+                "note": "Simulation used Ornstein-Uhlenbeck mean-reverting synergy fade.",
+            }
+
+            return ToolResult(success=True, data=formatted_res)
+        except Exception as e:
+            return ToolResult(
+                success=False,
+                data=None,
+                error=f"Monte Carlo simulation failed: {str(e)}",
+            )

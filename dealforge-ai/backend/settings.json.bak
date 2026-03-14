@@ -1,0 +1,52 @@
+{
+  "gemini_api_key": "AIzaSyAQHiAbEAMVlzWjLFpnA1tc6Sk9BrjVPtM",
+  "openai_api_key": "",
+  "mistral_api_key": "CWk7JOnTh3YZJc1l1lVuzqI1aCE0RNed",
+  "gemini_model": "gemini-1.5-flash",
+  "openai_model": "",
+  "mistral_model": "mistral-large-latest",
+  "ollama_base_url": "http://localhost:11434",
+  "ollama_model": "llama3",
+  "lmstudio_base_url": "http://localhost:1234/v1",
+  "lmstudio_model": "qwen/qwen3.5-9b",
+  "default_llm_provider": "gemini",
+  "agent_routing": {
+    "financial_analyst": "lmstudio",
+    "valuation_agent": "lmstudio",
+    "legal_advisor": "lmstudio",
+    "risk_assessor": "lmstudio",
+    "debate_moderator": "gemini",
+    "market_researcher": "lmstudio",
+    "market_risk_agent": "lmstudio",
+    "compliance_agent": "lmstudio",
+    "scoring_agent": "lmstudio",
+    "pageindex": "lmstudio",
+    "project_manager": "gemini",
+    "compiler_agent": "mistral"
+  },
+  "pageindex_mode": "local",
+  "gateway": {
+    "gemini_max_rpm": 12,
+    "gemini_max_tpm": 80000,
+    "openai_max_rpm": 50,
+    "openai_max_tpm": 150000,
+    "mistral_max_rpm": 5,
+    "mistral_max_tpm": 400000,
+    "cache_enabled": true,
+    "hybrid_compression": true,
+    "daily_budget_usd": 0
+  },
+  "search_priority": [
+    "ddg",
+    "searxng",
+    "serper"
+  ],
+  "serper_api_key": "",
+  "searxng_instance_url": "http://localhost:8080",
+  "searxng_api_key": "",
+  "fmp_api_key": "uuBCtFgWffTX2bsWC9ZTwj9zyzIfrYt5",
+  "financial_datasets_api_key": "",
+  "alpha_vantage_api_key": "LR61EWNFC0FNN920",
+  "finnhub_api_key": "d6jaci9r01ql467iudngd6jaci9r01ql467iudo0",
+  "sec_api_key": "3ceecf933abe8a801ffb6dae973847448cfe6a283841845b3a4e33995ee43962abc"
+}

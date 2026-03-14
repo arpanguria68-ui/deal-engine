@@ -15,6 +15,12 @@ import os
 import asyncio
 from typing import Any, Optional
 import structlog
+from tenacity import (
+    retry,
+    stop_after_attempt,
+    wait_exponential,
+    retry_if_exception_type,
+)
 
 try:
     import httpx
@@ -142,6 +148,55 @@ MCP_PROVIDERS = {
         "auth_method": "none",
         "capabilities": ["web_search"],
     },
+    "fmp": {
+        "name": "Financial Modeling Prep",
+        "description": "Comprehensive financial statements, 150+ ratios, DCF, WACC, and market data",
+        "url_env": "FMP_MCP_URL",
+        "api_key_env": "FMP_API_KEY",
+        "base_url": "https://financialmodelingprep.com/api/v3",
+        "ping_path": "/profile/AAPL",
+        "auth_method": "query_param",
+        "auth_param": "apikey",
+        "capabilities": [
+            "financials",
+            "valuation_models",
+            "ratios",
+            "real_time_prices",
+        ],
+    },
+    "alpha_vantage": {
+        "name": "Alpha Vantage",
+        "description": "Prices, fundamentals, and 50+ technical indicators",
+        "url_env": "ALPHA_VANTAGE_MCP_URL",
+        "api_key_env": "ALPHA_VANTAGE_API_KEY",
+        "base_url": "https://www.alphavantage.co",
+        "ping_path": "/query?function=GLOBAL_QUOTE&symbol=AAPL",
+        "auth_method": "query_param",
+        "auth_param": "apikey",
+        "capabilities": ["stock_price", "technical_indicators", "forex", "commodities"],
+    },
+    "financial_datasets": {
+        "name": "Financial Datasets",
+        "description": "Statements, real-time prices, news, crypto",
+        "url_env": "FINANCIAL_DATASETS_MCP_URL",
+        "api_key_env": "FINANCIAL_DATASETS_API_KEY",
+        "base_url": "https://api.financialdatasets.ai",
+        "ping_path": "/financial-statements/income-statements?ticker=AAPL&period=annual&limit=1",
+        "auth_method": "header",
+        "auth_header": "X-API-KEY",
+        "capabilities": ["financials", "stock_price", "news", "crypto"],
+    },
+    "sec_api": {
+        "name": "SEC API (sec-api.io)",
+        "description": "Advanced SEC filing search, XBRL-to-JSON, 10-K/8-K full-text",
+        "url_env": "SEC_API_MCP_URL",
+        "api_key_env": "SEC_API_KEY",
+        "base_url": "https://api.sec-api.io",
+        "ping_path": "/mapping/ticker/AAPL",
+        "auth_method": "query_param",
+        "auth_param": "token",
+        "capabilities": ["filing_search", "xbrl_to_json", "full_text", "filing_dd"],
+    },
 }
 
 # In-memory store for runtime-configured API keys (set via Settings UI)
@@ -187,6 +242,12 @@ async def initialize_provider(provider_name: str, api_key: str) -> dict:
                 param_name = provider.get("auth_param", "token")
                 resp = await client.get(
                     f"{base_url}{ping_path}", params={param_name: api_key}
+                )
+            elif auth_method == "header":
+                header_name = provider.get("auth_header", "X-API-KEY")
+                resp = await client.get(
+                    f"{base_url}{ping_path}",
+                    headers={header_name: api_key},
                 )
             else:
                 resp = await client.get(
@@ -287,43 +348,44 @@ class MCPClient:
         if not HTTPX_AVAILABLE:
             return {"error": "httpx not installed", "data": None}
 
-        # MCP tool call format (following Anthropic's MCP specification)
-        mcp_request = {
-            "jsonrpc": "2.0",
-            "id": f"dealforge-{tool_name}",
-            "method": "tools/call",
-            "params": {
-                "name": tool_name,
-                "arguments": params,
-            },
+        # Dispatch to local ToolRouter instead of JSON-RPC
+        _PROVIDER_TO_TOOL = {
+            "search_company": "company_search",
+            "get_financials": "fetch_financial_statements",
+            "search": "web_search",
+            "stock_price": "fetch_market_data",
         }
 
+        mapped_tool = _PROVIDER_TO_TOOL.get(tool_name, tool_name)
+
         try:
-            async with httpx.AsyncClient(timeout=30) as client:
-                resp = await client.post(
-                    f"{self.base_url}/mcp",
-                    json=mcp_request,
-                    headers={
-                        "Authorization": f"Bearer {self.api_key}",
-                        "Content-Type": "application/json",
-                    },
+            from app.core.tools.tool_router import ToolRouter
+
+            router = ToolRouter()
+
+            # execute() takes the tool name and kwarg params
+            # We don't have the context here for provenance but the router grabs it if set.
+            result = await router.execute(mapped_tool, **params)
+
+            if result.success:
+                logger.info(
+                    "mcp_query_success",
+                    provider=self.provider_name,
+                    tool=tool_name,
+                    mapped=mapped_tool,
                 )
-                if resp.status_code == 200:
-                    data = resp.json()
-                    logger.info(
-                        "mcp_query_success", provider=self.provider_name, tool=tool_name
-                    )
-                    return {
-                        "data": data.get("result"),
-                        "configured": True,
-                        "error": None,
-                    }
-                else:
-                    return {
-                        "error": f"HTTP {resp.status_code}: {resp.text[:200]}",
-                        "data": None,
-                        "configured": True,
-                    }
+                return {
+                    "data": result.data,
+                    "configured": True,
+                    "error": None,
+                }
+            else:
+                logger.warning("mcp_query_failed", tool=tool_name, error=result.error)
+                return {
+                    "error": result.error,
+                    "data": None,
+                    "configured": True,
+                }
         except Exception as e:
             logger.error(
                 "mcp_query_error",

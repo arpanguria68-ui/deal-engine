@@ -1,0 +1,195 @@
+## Summary
+
+DealForge AI is a multi-agent system designed to replicate the work of a PE/consulting firm analyst — financial modeling, market research, due diligence, risk assessment, and report generation. The system has 24+ specialized agents, LangGraph orchestration, local+cloud LLM routing, 30+ tools, financial data APIs (Finnhub, FMP, Alpha Vantage, Financial Datasets), and a PageIndex RAG pipeline.
+
+Despite extensive infrastructure being built, a full codebase audit has revealed that **agents are not actually using their tools**, the **LLM rate-limiting layer is disconnected**, **output quality lacks PE-grade structure**, and the **local LLM model is undersized** for the structured reasoning workload. This epic addresses these root-cause failures to make DealForge produce analyst-grade deliverables reliably.
+
+## Context & Problem
+
+**Who's affected:** Any user running deal analysis through DealForge — whether via the full workflow (`/api/v1/deals/{id}/run`), individual agent runs (`/api/v1/agents/run`), or OFAS missions. All three paths produce subpar outputs because the underlying agent execution layer is broken.
+
+**Where in the product:** The core agent execution pipeline — from how agents call LLMs, to how they invoke tools, to how they format output.
+
+**The current pain — broken into root causes:**
+
+1. **Agents don't call their tools.** The `MarketResearcherAgent` calls `self.llm.generate()` directly, bypassing `generate_with_tools()`. This means tools like web_search, finnhub_data, and company_data are never invoked — the LLM hallucinates all market data. Other agents may have similar bypasses. The `FetchFinancialStatementsTool` has an async/sync mismatch that prevents SEC EDGAR data from being fetched correctly.
+2. **Rate limiting and fallback are dead code.** The `LLMGateway` (with per-vendor RPM/TPM limits, exponential backoff, response caching, and a fallback chain) exists but is never called. Agents get LLM clients directly from `ModelRouter`, bypassing the gateway entirely. When Gemini's 12 RPM limit is hit during a parallel 4-agent run, there's no backoff or fallback — the request just fails.
+3. **Agent output lacks PE/consulting quality.** System prompts are generic ("You are an expert financial analyst"). There is no deal-goal injection (what's the buyer's thesis?), no Pyramid Principle structuring, no stage-aware formatting (screening vs. DD vs. IC memo), and no citation discipline linking every claim to a specific tool result. Outputs read like raw LLM dumps, not analyst deliverables.
+4. **The local LLM model is undersized.** Qwen 3.5 9B on a 16GB RTX 4070 Ti leaves significant VRAM unused. The model struggles with 20+ field JSON schemas, financial chain-of-thought reasoning, and the ReAct tool-calling format — causing silent tool-call failures when local models produce malformed JSON blocks.
+5. **PageIndex RAG queries are poorly constructed.** Queries are keyword-stuffed strings with deal_id appended as raw text rather than used as a metadata filter. This produces low-relevance retrieval results, so agents either ignore RAG context or get irrelevant document chunks.
+6. **MCP layer is disconnected.** 13 MCP providers are registered with capability definitions and ping logic, but the `MCPClient` sends JSON-RPC requests to `/mcp` endpoints that data providers don't expose. Financial data tools (Finnhub, FMP, etc.) work via their own direct REST clients independently of MCP.
+
+&nbsp;
+
+
+Observations
+The codebase has a well-structured multi-agent system with BaseAgent, LLMGateway, ModelRouter, ToolRouter, and PageIndexClient all implemented. The critical issues are:
+
+MarketResearcherAgent.run() calls self.llm.generate() directly (line 85) instead of self.generate_with_tools() — bypassing all tool invocation. FinancialAnalystAgent correctly uses generate_with_tools().
+LLMGateway is fully implemented but never called — BaseAgent.generate_with_tools() calls model_router.get_client_for_agent() directly, bypassing the gateway's rate limiting, backoff, caching, and fallback chain.
+FetchFinancialStatementsTool.execute() is defined as a sync method (line 149) while BaseTool.execute() is async — causing silent failures when awaited.
+DealState has no buyer_thesis, deal_stage, or deal_goal fields; system prompts are generic.
+PageIndexClient.query() passes deal_id correctly via filters dict, but BaseAgent.retrieve_context() (line 233) calls self.memory.query(query, top_k=top_k) without passing filters — so deal_id is never used as a metadata filter.
+MCPClient.query() sends JSON-RPC to {base_url}/mcp — an endpoint that Finnhub, FMP, etc. don't expose. The direct REST tool clients (FinnhubTool, AlphaVantageTool, etc.) work correctly and are already registered in ToolRouter.
+Approach
+Fix each root cause in dependency order: async/sync mismatch first (it's a silent crash), then wire LLMGateway into generate_with_tools(), then fix the MarketResearcherAgent tool bypass, then fix RAG query construction, then enrich system prompts with deal-goal injection, and finally deprecate the broken MCP JSON-RPC path in favor of the working direct REST tools.
+
+Implementation Steps
+Step 1 — Fix FetchFinancialStatementsTool async/sync mismatch
+File: 
+
+Change def execute(...) (line 149) to async def execute(...).
+The internal calls self._fetch_from_edgar(...) and self._fetch_from_yfinance(...) use requests (sync) and yfinance (sync). Wrap each blocking call with asyncio.get_event_loop().run_in_executor(None, ...) or use asyncio.to_thread(...) so the async event loop is not blocked.
+Change _fetch_from_edgar and _fetch_from_yfinance to remain sync helpers (they use requests/yfinance) but call them via await asyncio.to_thread(self._fetch_from_edgar, ...) inside the now-async execute().
+Step 2 — Wire LLMGateway into BaseAgent.generate_with_tools()
+File: 
+
+The generate_with_tools() method (line 246) currently calls model_router.get_client_for_agent(self.name) and then llm.generate() directly. Replace the two llm.generate() call sites inside generate_with_tools() with calls through LLMGateway.call():
+
+
+Sequence:
+generate_with_tools()
+  → get_llm_gateway().call(provider, prompt, system_prompt, tools)
+  → LLMGateway handles: rate check → fallback chain → exponential_backoff_retry → response cache
+Specifically:
+
+Import get_llm_gateway from app.core.llm.llm_gateway at the top of base.py.
+In generate_with_tools(), after determining provider via model_router.get_provider_for_agent(self.name), replace the await llm.generate(...) calls with await get_llm_gateway().call(provider=provider, prompt=prompt, system_prompt=system_prompt, tools=tools).
+The gateway's call() already returns a dict with "content" and "function_calls" keys (it delegates to client.generate() internally), so the downstream parsing logic in generate_with_tools() remains unchanged.
+Also replace the llm.generate() call in generate_issue_tree() (line 431) with the gateway call, since issue tree generation is also a cloud-bound call that should respect rate limits.
+Step 3 — Fix MarketResearcherAgent to use generate_with_tools()
+File: 
+
+In MarketResearcherAgent.run() (line 85), replace response = await self.llm.generate(prompt, system_prompt) with response = await self.generate_with_tools(prompt, system_prompt).
+Remove the three separate self.tools.execute("market_data", ...) calls (lines 51–70) — these are now redundant because generate_with_tools() will let the LLM decide which tools to call via the ReAct loop. The tool results will be injected back into the follow-up prompt automatically.
+Update _build_research_prompt() to remove the market_data, competitor_data, and trends_data parameters (since they're no longer pre-fetched) and instead instruct the LLM to call the appropriate tools (web_search, company_data, finnhub_data) to retrieve this data.
+Also fix analyze_competitor() (line 259) which calls self.llm.generate() directly — replace with self.generate_with_tools().
+Step 4 — Fix RAG query construction to use deal_id as a metadata filter
+File: 
+
+In retrieve_context() (line 228), change the call from: await self.memory.query(query, top_k=top_k) to: await self.memory.query(query, top_k=top_k, filters={"deal_id": deal_id} if deal_id else None)
+Add a deal_id: Optional[str] = None parameter to retrieve_context().
+Update all callers of retrieve_context() in run_with_structure() (line 161) to pass deal_id from context: await self.retrieve_context(branch.hypothesis, top_k=3, deal_id=(context or {}).get("deal_id")).
+In MarketResearcherAgent.run(), FinancialAnalystAgent.run(), and other agents that call retrieve_context(), pass deal_id from context rather than appending it as raw text to the query string.
+Step 5 — Enrich system prompts with deal-goal injection and PE-grade structure
+File: 
+
+Add buyer_thesis: Optional[str], deal_stage: Optional[str], and deal_goal: Optional[str] fields to DealState TypedDict.
+Update create_initial_state() to accept and populate these fields.
+File: 
+
+Update build_system_prompt() (line 351) to accept context: Optional[Dict] = None and inject deal-specific fields:
+buyer_thesis from context → prepend as "Investment Thesis: {buyer_thesis}"
+deal_stage from context → append stage-aware formatting instructions (e.g., at screening stage: "Focus on go/no-go signals"; at due_diligence: "Provide exhaustive evidence-backed analysis"; at ic_memo: "Structure output using Pyramid Principle: Situation → Complication → Resolution")
+Citation discipline instruction: "Every quantitative claim must be followed by [Source: <tool_name>, <date/url>]"
+Files: 
+, 
+, 
+, 
+, 
+
+In each agent's _build_system_prompt() or equivalent, call self.build_system_prompt(context=self._current_context) from BaseAgent to inherit the deal-goal injection, then append agent-specific expertise. This replaces the current generic f"You are {self.name}, {self.description}" pattern.
+Step 6 — Deprecate broken MCP JSON-RPC path; route through direct REST tools
+File: 
+
+In MCPClient.query() (line 324), replace the JSON-RPC POST to {base_url}/mcp with a dispatch to the corresponding direct REST tool client already registered in ToolRouter. Specifically:
+Add a _PROVIDER_TO_TOOL_MAP dict mapping provider names to their ToolRouter tool names: e.g., {"finnhub": "finnhub_data", "fmp": "finance_analysis", "alpha_vantage": "alpha_vantage", "financial_datasets": "financial_datasets"}.
+In query(), check if the provider has a mapped tool; if so, instantiate the tool directly and call await tool.execute(**params) instead of the JSON-RPC POST.
+For providers without a direct tool (e.g., pitchbook, sp_global, factset), keep the existing JSON-RPC stub but log a clear warning: "Provider {name} requires a real MCP server endpoint — not yet available".
+File: 
+
+In MCPRouter.web_search() (line 485), replace the client.query("search", {"q": query}) call with a direct call to DuckDuckGoSearchTool().execute(query=query) as the DDG fallback, and SerperTool (if configured) as the primary. This ensures web search actually works without a JSON-RPC server.
+Step 7 — Upgrade local LLM model configuration
+File: 
+ and 
+
+Update the default LMSTUDIO_MODEL setting from "local-model" to "qwen2.5-32b-instruct" (or "qwen2.5-14b-instruct" as a minimum) in the config/env example.
+Update backend/.env.example to document the recommended model: LMSTUDIO_MODEL=qwen2.5-32b-instruct with a comment explaining the VRAM requirement.
+In LMStudioClient.generate() (line 114), increase the default max_tokens from 12000 to 16000 to accommodate the larger model's output capacity for 20+ field JSON schemas.
+In model_router.py, for agents that require complex structured JSON output (dcf_lbo_architect, advanced_financial_modeler, complex_reasoning), ensure they are routed to "gemini" (cloud) rather than "lmstudio" when the local model is the smaller 9B variant — add a config flag LOCAL_MODEL_SIZE_B (default 9) and if < 14, override routing for those agents to cloud.
+Summary of Changes
+PageIndex
+ToolRouter
+ModelRouter
+LLMGateway
+BaseAgent
+Agent
+PageIndex
+ToolRouter
+ModelRouter
+LLMGateway
+BaseAgent
+Agent
+run(task, context)
+retrieve_context(query, filters={deal_id})
+generate_with_tools(prompt, system_prompt)
+get_provider_for_agent(name)
+call(provider, prompt, tools)
+check rate limits → fallback chain
+exponential_backoff_retry
+{content, function_calls}
+execute_function_calls(calls)
+tool_results
+call(provider, follow_up_prompt)
+final_content
+AgentOutput
+Root Cause	File(s) Changed	Fix
+FetchFinancialStatementsTool sync/async mismatch	financial_data_api.py	async def execute() + asyncio.to_thread()
+LLMGateway bypassed	base.py	Route generate_with_tools() through get_llm_gateway().call()
+MarketResearcherAgent bypasses tools	market_researcher.py	Replace self.llm.generate() with self.generate_with_tools()
+RAG deal_id not used as filter	base.py	Pass filters={"deal_id": deal_id} to memory.query()
+Generic system prompts	base.py, agent files, state.py	Add buyer_thesis/deal_stage to state; inject into build_system_prompt()
+MCP JSON-RPC dead code	mcp/__init__.py	Dispatch to direct REST tool clients via _PROVIDER_TO_TOOL_MAP
+Local model undersized	config.py, .env.example, model_router.py	Document larger model; route complex agents to cloud when model is small
+
+
+Handoff To
+
+
+Verification
+
+
+
+Tool Calls
+The execution introduces substantial new infrastructure, but the core epic outcomes are still not met on the critical execution path. The most important regressions/omissions are: tool execution contract breakage in fetch_financial_statements, agents still bypassing tool-calling flow, LLMGateway still not integrated into agent calls, RAG retrieval still missing deal_id metadata filtering, and MCP still targeting unsupported /mcp JSON-RPC endpoints. These gaps prevent the ticket from delivering reliable, tool-grounded, rate-resilient analyst outputs as required by the epic specs.
+
+Verification Comments
+
+Selection Mode
+
+Handoff To
+
+
+
+
+fetch_financial_statements still violates the async tool contract, causing runtime failures whenever ToolRouter awaits it.
+
+
+
+
+
+MarketResearcherAgent still bypasses the tool-calling execution loop and calls the LLM directly for final synthesis.
+
+
+
+
+
+The central LLMGateway remains disconnected from agent execution despite gateway APIs being exposed in main routes.
+
+
+
+
+
+RAG retrieval still does not apply deal_id metadata filtering, reducing relevance and increasing cross-deal contamination risk.
+
+
+
+
+
+MCP integration still targets unsupported /mcp JSON-RPC endpoints, so configured providers continue failing in production paths.
+
+
+
+
+
+Deal-goal prompt conditioning is still absent, so outputs remain generic and not stage-aware for screening/DD/IC workflows.

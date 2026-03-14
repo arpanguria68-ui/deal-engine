@@ -7,9 +7,12 @@ from datetime import datetime
 from enum import Enum
 import structlog
 import json
+import re
+import asyncio
 
 from app.core.llm import get_llm_client
 from app.core.llm.model_router import get_model_router
+from app.core.llm.llm_gateway import get_llm_gateway
 from app.core.memory.pageindex_client import PageIndexClient
 from app.core.tools.tool_router import ToolRouter
 from app.core.reflection.reflection_engine import ReflectionEngine, RewardEngine
@@ -53,6 +56,7 @@ class BaseAgent(ABC):
 
     name: str = "base_agent"
     description: str = "Base agent class"
+    recommended_model: str = ""
 
     def __init__(
         self,
@@ -69,6 +73,7 @@ class BaseAgent(ABC):
             router = get_model_router()
             self.llm = router.get_client_for_agent(self.name)
         self.memory = pageindex_client or PageIndexClient()
+        self.pageindex_client = self.memory  # Alias for legacy agent support
         self.reflection = reflection_engine or ReflectionEngine()
         self.reward = reward_engine or RewardEngine()
 
@@ -113,12 +118,31 @@ class BaseAgent(ABC):
 
         # Step 0: DealForge 2.0 — Inject Domain Skill
         skill_context = build_skill_context(task, self.name)
-        if skill_context:
+
+        # [NEW] Step 0.5: Sector Customization Framework
+        from app.core.sector_loader import load_sector_config, build_sector_prompt
+
+        sector_name = (context or {}).get("sector")
+        sector_prompt = ""
+        if sector_name:
+            cfg = load_sector_config(sector_name)
+            sector_prompt = build_sector_prompt(self.name, cfg)
+
+        if skill_context or sector_prompt:
             self.logger.info(
-                "Skill injected", agent=self.name, skill_chars=len(skill_context)
+                "Context injection",
+                agent=self.name,
+                has_skill=bool(skill_context),
+                has_sector=bool(sector_prompt),
             )
-            # Pass skill to the LLM context via enriched_context
-            context = {**(context or {}), "skill_context": skill_context}
+            # Pass injected traits to the LLM context via enriched_context
+            context = {
+                **(context or {}),
+                "skill_context": skill_context,
+                "sector_prompt": sector_prompt,
+            }
+
+        self._current_context = context  # Store centrally for generate_with_tools
 
         # Step 1: Generate MECE Issue Tree
         issue_tree = await self.generate_issue_tree(task, context)
@@ -206,11 +230,14 @@ class BaseAgent(ABC):
         return output
 
     async def retrieve_context(
-        self, query: str, top_k: int = 5
+        self, query: str, top_k: int = 5, deal_id: Optional[str] = None
     ) -> List[Dict[str, Any]]:
-        """Retrieve relevant context from memory"""
+        """Retrieve relevant context from memory, filtered by deal_id when provided"""
         try:
-            chunks = await self.memory.query(query, top_k=top_k)
+            kwargs = {"top_k": top_k}
+            if deal_id:
+                kwargs["filters"] = {"deal_id": deal_id}
+            chunks = await self.memory.query(query, **kwargs)
             return [
                 {
                     "content": chunk.content,
@@ -224,26 +251,149 @@ class BaseAgent(ABC):
             return []
 
     async def generate_with_tools(
-        self, prompt: str, system_prompt: Optional[str] = None
+        self,
+        prompt: str,
+        system_prompt: Optional[str] = None,
+        temperature: Optional[float] = None,
+        max_tool_rounds: int = 3,
     ) -> Dict[str, Any]:
-        """Generate response with potential tool calls"""
+        """Generate response with tool calls, routed through LLM Gateway.
+
+        Supports iterative multi-round tool calling (up to max_tool_rounds).
+        All LLM calls go through the gateway for rate limiting, caching, and fallback.
+        """
         from app.core.llm.model_router import get_model_router
+
+        # enforce deterministic default
+        if temperature is None:
+            temperature = 0.0
 
         # Get available tools (filtered per-agent via AGENT_TOOL_MAP)
         tools = self.tools.list_tools(agent_name=self.name)
 
-        # Get fresh router to respect dynamic UI settings changes
-        llm = get_model_router().get_client_for_agent(self.name)
+        # Inject Sector Prompt dynamically
+        ctx = getattr(self, "_current_context", {})
+        sector_prompt = ctx.get("sector_prompt")
+        if sector_prompt:
+            system_prompt = (system_prompt or "") + "\n\n" + sector_prompt
 
-        # Generate initial response
-        response = await llm.generate(
-            prompt=prompt, system_prompt=system_prompt, tools=tools if tools else None
-        )
+        # Get provider from router (respects UI settings)
+        model_router = get_model_router()
+        provider = model_router.get_provider_for_agent(self.name)
+        is_local_model = provider in ["ollama", "lmstudio", "mistral"]
 
-        # Handle tool calls
-        if response.get("function_calls"):
+        gateway = get_llm_gateway()
+
+        # For local models, inject ReAct instructions and disable native tools
+        effective_tools = tools if (tools and not is_local_model) else None
+        if is_local_model and tools:
+            react_instructions = """
+You have access to the following tools:
+{}
+
+To use a tool, you MUST output a JSON block wrapped in Markdown like this:
+```json
+{{
+  "command": "tool_name",
+  "args": {{"arg1": "value1"}}
+}}
+```
+Do NOT wrap the JSON in any other formatting. Output only the JSON block to use a tool, or your final answer if no tools are needed.
+""".format(
+                json.dumps([t.get("function") for t in tools], indent=2)
+            )
+            system_prompt = (system_prompt or "") + "\n\n" + react_instructions
+
+        # ── Multi-round tool calling loop (up to max_tool_rounds) ──
+        accumulated_tool_results = []
+        all_function_calls = []
+        current_prompt = prompt
+        response = {}
+
+        for round_num in range(1, max_tool_rounds + 1):
+            # Route through LLM Gateway (rate limit, cache, fallback)
+            response = await gateway.call(
+                provider=provider,
+                prompt=current_prompt,
+                system_prompt=system_prompt,
+                tools=effective_tools,
+                temperature=temperature,
+            )
+
+            # Parse ReAct JSON for local models
+            if is_local_model and tools:
+                content = response.get("content", "")
+                print(f"DEBUG - Raw Local Content:\n{content}\n" + "="*40)
+                # Attempt to find JSON blocks both with and without code blocks
+                json_blocks = re.findall(
+                    r"```json\s*(\{.*?\})\s*```", content, re.DOTALL
+                )
+                if not json_blocks:
+                    # Fallback: look for any { } block that looks like it might be a tool call
+                    json_blocks = re.findall(
+                        r"(\{.*?\})", content, re.DOTALL
+                    )
+                function_calls = []
+                for block in json_blocks:
+                    try:
+                        parsed = json.loads(block)
+                        # Be flexible with tool call keys
+                        tool_name = parsed.get("command") or parsed.get("tool") or parsed.get("name") or parsed.get("call")
+                        if tool_name and isinstance(tool_name, str):
+                            args = parsed.get("args") or parsed.get("parameters") or parsed.get("params") or {}
+                            
+                            # If args is a string, it might be double-encoded JSON
+                            if isinstance(args, str):
+                                try:
+                                    args = json.loads(args)
+                                except:
+                                    pass
+                                    
+                            function_calls.append(
+                                {
+                                    "name": tool_name,
+                                    "args": args if isinstance(args, dict) else {},
+                                }
+                            )
+                    except json.JSONDecodeError:
+                        # Attempt JSON repair for common local LLM issues
+                        try:
+                            repaired = block.rstrip(",").rstrip()
+                            if not repaired.endswith("}"):
+                                repaired += "}"
+                            parsed = json.loads(repaired)
+                            tool_name = parsed.get("command") or parsed.get("tool") or parsed.get("name") or parsed.get("call")
+                            if tool_name and isinstance(tool_name, str):
+                                args = parsed.get("args") or parsed.get("parameters") or parsed.get("params") or {}
+                                
+                                # If args is a string, it might be double-encoded JSON
+                                if isinstance(args, str):
+                                    try:
+                                        args = json.loads(args)
+                                    except:
+                                        pass
+                                        
+                                function_calls.append(
+                                    {
+                                        "name": tool_name,
+                                        "args": args if isinstance(args, dict) else {},
+                                    }
+                                )
+                            self.logger.info("JSON repair succeeded for ReAct block")
+                        except json.JSONDecodeError:
+                            self.logger.warning(
+                                "Failed to parse/repair ReAct JSON block", block=block
+                            )
+                if function_calls:
+                    response["function_calls"] = function_calls
+
+            # Check if tool calls were requested
+            if not response.get("function_calls"):
+                break  # No more tool calls needed — exit loop
+
             self.logger.info(
                 "Tool calls detected",
+                round=round_num,
                 calls=[c["name"] for c in response["function_calls"]],
             )
 
@@ -252,27 +402,81 @@ class BaseAgent(ABC):
                 response["function_calls"]
             )
 
-            # Add tool results to response
-            response["tool_results"] = [
-                {"success": r.success, "data": r.data, "error": r.error}
-                for r in tool_results
-            ]
+            round_results = []
+            for i, r in enumerate(tool_results):
+                round_results.append({
+                    "name": response["function_calls"][i]["name"],
+                    "success": r.success,
+                    "data": r.data,
+                    "error": r.error
+                })
+            accumulated_tool_results.extend(round_results)
+            all_function_calls.extend(response["function_calls"])
 
-            import json
+            # Build follow-up prompt with accumulated results
+            tool_context = json.dumps(accumulated_tool_results, indent=2)
+            current_prompt = (
+                f"{prompt}\n\n--- TOOL EXECUTION RESULTS (Round {round_num}) ---\n"
+                f"{tool_context}\n\n"
+                f"Based on these results, either request additional tool calls if you need more data, "
+                f"or provide your final comprehensive analysis in the requested JSON format."
+            )
 
-            tool_context = json.dumps(response["tool_results"], indent=2)
-            follow_up = f"{prompt}\n\n--- TOOL EXECUTION RESULTS ---\n{tool_context}\n\nBased on these results, provide your final comprehensive analysis in the requested JSON format. Ensure your output is purely JSON."
-
-            final_response = await llm.generate(
-                prompt=follow_up, system_prompt=system_prompt
+        # If we did tool calls, do a final synthesis through the gateway
+        if accumulated_tool_results:
+            tool_context = json.dumps(accumulated_tool_results, indent=2)
+            final_prompt = (
+                f"{prompt}\n\n--- ALL TOOL RESULTS ---\n{tool_context}\n\n"
+                f"Based on all these results, provide your final comprehensive analysis "
+                f"in the requested JSON format. Ensure your output is purely JSON."
+            )
+            final_response = await gateway.call(
+                provider=provider,
+                prompt=final_prompt,
+                system_prompt=system_prompt,
+                temperature=temperature,
             )
             response["content"] = final_response.get("content", "")
+            response["tool_results"] = accumulated_tool_results
+            response["function_calls"] = all_function_calls
+            response["provider_used"] = final_response.get("provider_used", provider)
 
         return response
 
-    def build_system_prompt(self) -> str:
-        """Build system prompt for the agent"""
-        return f"""You are {self.name}, {self.description}.
+    # ═══════════════════════════════════════════════════════════
+    #  Stage-Aware Prompt Injection (QA Flow 1 & 5)
+    # ═══════════════════════════════════════════════════════════
+
+    _STAGE_INSTRUCTIONS = {
+        "screening": (
+            "\n\n## Output Format (Screening Mode)\n"
+            "Focus on go/no-go signals. Limit output to 1-page equivalent. "
+            "Key metrics + 3 bullet risks + recommendation signal."
+        ),
+        "deep_dive": (
+            "\n\n## Output Format (Deep-Dive Mode)\n"
+            "Provide exhaustive evidence-backed analysis. Include data tables, "
+            "sourced claims, risk matrix. Every quantitative claim must cite "
+            "[Source: tool_name, date]."
+        ),
+        "ic_memo": (
+            "\n\n## Output Format (IC Memo Mode)\n"
+            "Structure using Pyramid Principle: lead with recommendation, then "
+            "supporting arguments, then evidence. Use SCQA framework for "
+            "executive summary (Situation → Complication → Question → Answer)."
+        ),
+    }
+
+    _CITATION_DISCIPLINE = (
+        "\n\n## Citation Discipline\n"
+        "Every quantitative claim must be followed by [Source: tool_name, date]. "
+        "If data is not available from tools, explicitly mark as [ESTIMATED] "
+        "and state the estimation methodology."
+    )
+
+    def build_system_prompt(self, context: Optional[Dict[str, Any]] = None) -> str:
+        """Build system prompt with deal-stage-aware formatting instructions."""
+        base = f"""You are {self.name}, {self.description}.
 
 Your task is to provide thorough, well-reasoned analysis with specific data points and actionable recommendations.
 
@@ -283,6 +487,28 @@ Guidelines:
 - Be objective and highlight both positives and concerns
 - Format output as structured JSON when requested
 """
+        if not context:
+            return base + self._CITATION_DISCIPLINE
+
+        # Inject buyer thesis and deal goal
+        thesis = context.get("buyer_thesis")
+        goal = context.get("deal_goal")
+        if thesis:
+            base += f"\n\n## Investment Thesis\n{thesis}"
+        if goal:
+            base += f"\n\n## Deal Goal\n{goal}"
+
+        # Inject stage-specific formatting
+        stage = context.get("deal_stage", "deep_dive")
+        stage_instruction = self._STAGE_INSTRUCTIONS.get(
+            stage, self._STAGE_INSTRUCTIONS["deep_dive"]
+        )
+        base += stage_instruction
+
+        # Always append citation discipline
+        base += self._CITATION_DISCIPLINE
+
+        return base
 
     def validate_output(
         self, output: Dict[str, Any], expected_schema: Optional[Dict] = None
@@ -317,6 +543,37 @@ Guidelines:
 
     # ===== MECE Issue Tree Methods =====
 
+    async def evaluate_replication(
+        self, task: str, context: Optional[Dict] = None, runs: int = 3
+    ) -> Dict[str, float]:
+        """Execute the same task multiple times and return consistency metrics.
+
+        This utility is intended for quality assessments and can optionally log
+        the results to the AgentQualityStore. By default the underlying LLM is
+        invoked with temperature=0 (deterministic), but stochastic models will
+        still vary, allowing us to quantify variance.
+        """
+        from app.core.quality.replication import evaluate_outputs
+        from app.core.quality.agent_quality_store import AgentQualityStore
+
+        outputs: list[str] = []
+        for _ in range(runs):
+            result = await self.run(task, context)
+            outputs.append(str(result.data or result.reasoning or result))
+
+        stats = evaluate_outputs(outputs)
+
+        # log into quality store for later inspection
+        try:
+            store = AgentQualityStore()
+            await store.initialize()
+            await store.log_replication_run(self.name, task, outputs)
+        except Exception:
+            # best-effort, do not fail entire evaluation
+            self.logger.warning("replication_logging_failed")
+
+        return stats
+
     async def generate_issue_tree(
         self, task: str, context: Optional[Dict] = None
     ) -> IssueTreeNode:
@@ -346,13 +603,14 @@ Respond with JSON:
 }}"""
 
         try:
-            from app.core.llm.model_router import get_model_router
-
             llm = get_model_router().get_client_for_agent(self.name)
+            provider = get_model_router().get_provider_for_agent(self.name)
 
-            response = await llm.generate(
+            response = await get_llm_gateway().call(
+                provider=provider,
                 prompt=tree_prompt,
                 system_prompt="You are a McKinsey-trained structured problem solver. Return only valid JSON.",
+                temperature=0.0,
             )
             tree_data = json.loads(
                 response["content"].strip().strip("```json").strip("```").strip()
@@ -471,6 +729,9 @@ Respond with JSON:
             self.logger.warning("Failed to store memory", error=str(e))
 
 
+from app.agents.compiler_agent import ReportCompilerAgent
+
+
 class AgentRegistry:
     """Registry for managing agents"""
 
@@ -484,21 +745,97 @@ class AgentRegistry:
         self.logger.info("Agent registered", agent_name=agent.name)
 
     def get(self, name: str) -> Optional[BaseAgent]:
-        """Get agent by name"""
+        """Get an agent by name"""
         return self.agents.get(name)
 
-    def list_agents(self) -> List[Dict[str, str]]:
-        """List all registered agents"""
-        return [
-            {"name": name, "description": agent.description}
-            for name, agent in self.agents.items()
-        ]
+    def list_agents(self) -> List[str]:
+        """List registered agent names"""
+        return list(self.agents.keys())
 
 
-# Global registry
-_agent_registry = AgentRegistry()
+# Singleton registry instance
+_registry: Optional[AgentRegistry] = None
 
 
 def get_agent_registry() -> AgentRegistry:
-    """Get global agent registry"""
-    return _agent_registry
+    """Get the singleton agent registry"""
+    global _registry
+    if _registry is None:
+        _registry = AgentRegistry()
+
+        # Import all agents here to avoid circular dependencies
+        from app.agents.project_manager import ProjectManagerAgent
+        from app.agents.market_researcher import (
+            MarketResearcherAgent,
+            DebateModeratorAgent,
+            ScoringAgent,
+        )
+        from app.agents.financial_analyst import FinancialAnalystAgent, ValuationAgent
+        from app.agents.risk_assessor import RiskAssessorAgent, MarketRiskAgent
+        from app.agents.legal_advisor import LegalAdvisorAgent, ComplianceAgent
+        from app.agents.dcf_lbo_architect import DCFLBOArchitectAgent
+        from app.agents.red_team_agent import RedTeamAgent
+        from app.agents.business_analyst import BusinessAnalystAgent
+
+        # Extended agents
+        from app.agents.due_diligence_agent import CommercialDueDiligenceAgent
+        from app.agents.integration_planner_agent import IntegrationPlannerAgent
+
+        # Removed missing or re-mapped agents
+        from app.agents.esg_agent import ESGAgent
+        from app.agents.prospectus_agent import ProspectusProcessingAgent
+        from app.agents.treasury_agent import (
+            TaxComplianceAgent,
+            TreasuryCashAgent,
+            FPAForecastingAgent,
+        )
+        from app.agents.ofas_supervisor import OFASSupervisorAgent
+        from app.agents.ai_tech_diligence_agent import AITechDiligenceAgent
+        from app.agents.compliance_qa_agent import ComplianceQAAgent
+        from app.agents.investment_memo_agent import InvestmentMemoAgent
+        from app.agents.compiler_agent import ReportCompilerAgent
+
+        # New advanced agents
+        from app.agents.advanced_financial_modeler import AdvancedFinancialModelerAgent
+        from app.agents.data_curator_agent import DataCuratorAgent
+        from app.agents.complex_reasoning_agent import ComplexReasoningAgent
+        from app.agents.report_architect_agent import ReportArchitectAgent
+
+        # Register core agents
+        _registry.register(ProjectManagerAgent())
+        _registry.register(DebateModeratorAgent())
+        _registry.register(ScoringAgent())
+        _registry.register(FinancialAnalystAgent())
+        _registry.register(MarketResearcherAgent())
+        _registry.register(LegalAdvisorAgent())
+        _registry.register(RiskAssessorAgent())
+        _registry.register(MarketRiskAgent())
+        _registry.register(ComplianceAgent())
+        _registry.register(DCFLBOArchitectAgent())
+
+        # Register extended agents
+        _registry.register(ValuationAgent())
+        _registry.register(CommercialDueDiligenceAgent())
+        _registry.register(IntegrationPlannerAgent())
+        _registry.register(ESGAgent())
+        _registry.register(ProspectusProcessingAgent())
+        _registry.register(TaxComplianceAgent())
+        _registry.register(TreasuryCashAgent())
+        _registry.register(AITechDiligenceAgent())
+        _registry.register(OFASSupervisorAgent())
+        _registry.register(ComplianceQAAgent())
+        _registry.register(InvestmentMemoAgent())
+        _registry.register(ReportCompilerAgent())
+
+        # Register advanced agents
+        _registry.register(AdvancedFinancialModelerAgent())
+        _registry.register(DataCuratorAgent())
+        _registry.register(ComplexReasoningAgent())
+        _registry.register(ReportArchitectAgent())
+
+        # Register previously missing agents
+        _registry.register(RedTeamAgent())
+        _registry.register(BusinessAnalystAgent())
+        _registry.register(FPAForecastingAgent())
+
+    return _registry

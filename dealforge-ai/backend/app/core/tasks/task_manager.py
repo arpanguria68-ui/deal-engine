@@ -76,6 +76,8 @@ class TodoList:
 
     id: str = ""
     deal_id: str = ""
+    ticker: str = ""
+    company_name: str = ""
     title: str = ""
     description: str = ""
     status: str = "draft"  # draft → approved → in_progress → completed
@@ -92,6 +94,8 @@ class TodoList:
         return {
             "id": self.id,
             "deal_id": self.deal_id,
+            "ticker": self.ticker,
+            "company_name": self.company_name,
             "title": self.title,
             "description": self.description,
             "status": self.status,
@@ -228,28 +232,296 @@ AGENT_CAPABILITIES = {
         "keywords": ["score", "rating", "grade", "final", "aggregate"],
         "description": "Final deal scoring and aggregation",
     },
+    "report_architect": {
+        "keywords": ["report", "architect", "template", "branding", "layout", "pdf"],
+        "description": "Selects report templates, configures branding, and organizes final output sections",
+    },
+    "data_curator": {
+        "keywords": ["curate", "synthesize", "normalize", "conflicts", "data bible"],
+        "description": "Synthesizes data from multiple sources, resolves conflicts, and queries PageIndex",
+    },
+    "complex_reasoning": {
+        "keywords": ["reasoning", "chain of thought", "logic", "synthesis"],
+        "description": "Applies deep Chain-of-Thought reasoning to curated data for strategic insights",
+    },
+    "advanced_financial_modeler": {
+        "keywords": ["advanced model", "3-statement", "monte carlo", "scenario"],
+        "description": "Builds 3-statement models, advanced scenarios, and Monte Carlo simulations",
+    },
+    "red_team": {
+        "keywords": [
+            "red team",
+            "adversarial",
+            "challenge",
+            "stress test",
+            "contrarian",
+        ],
+        "description": "Stress-tests assumptions with adversarial analysis and contrarian viewpoints",
+    },
+    "business_analyst": {
+        "keywords": [
+            "business model",
+            "unit economics",
+            "customer",
+            "churn",
+            "retention",
+        ],
+        "description": "Business model analysis, unit economics, strategic recommendations",
+    },
+    "compiler_agent": {
+        "keywords": ["compile", "assemble", "final report", "output", "deliverable"],
+        "description": "Compiles all agent outputs into cohesive final deliverables",
+    },
+    "esg_agent": {
+        "keywords": [
+            "esg",
+            "environmental",
+            "social",
+            "governance",
+            "sustainability",
+            "carbon",
+        ],
+        "description": "ESG risk scoring, carbon footprint, supply chain risk analysis",
+    },
+    "integration_planner_agent": {
+        "keywords": ["integration", "synergy", "roadmap", "merger integration", "pmi"],
+        "description": "Post-merger integration planning, synergy tracking, and churn modeling",
+    },
+    "fpa_forecasting_agent": {
+        "keywords": ["fpa", "forecast", "budget", "projection", "financial planning"],
+        "description": "FP&A forecasting, budget modeling, and financial projections",
+    },
+    "tax_compliance_agent": {
+        "keywords": ["tax", "compliance", "transfer pricing", "tax structure"],
+        "description": "Tax compliance assessment and structure optimization",
+    },
+    "ai_tech_diligence_agent": {
+        "keywords": [
+            "ai",
+            "machine learning",
+            "tech stack",
+            "data moat",
+            "defensibility",
+        ],
+        "description": "AI/ML technology stack evaluation and defensibility scoring",
+    },
 }
 
 
 class TaskManager:
-    """Manages todo lists and task execution for deal analysis."""
+    """Manages todo lists and task execution for deal analysis.
 
-    def __init__(self):
-        self._lists: Dict[str, TodoList] = (
-            {}
-        )  # In-memory store (persisted via Redis/DB later)
+    Persists all data to SQLite via aiosqlite. An in-memory cache (_lists)
+    is kept for fast reads; all writes are flushed to disk transactionally.
+    """
+
+    def __init__(self, db_path: str = None):
+        import os
+        from app.config import get_settings
+
+        settings = get_settings()
+
+        if not db_path:
+            base = settings.DATA_DIR
+            os.makedirs(base, exist_ok=True)
+            self.db_path = os.path.join(base, "dealforge_tasks.db")
+        else:
+            self.db_path = db_path
+
+        self._lists: Dict[str, TodoList] = {}  # Read-through cache
+        self._initialized = False
         self.logger = structlog.get_logger()
 
+    async def initialize(self):
+        """Create tables if they don't exist and load all lists into cache."""
+        import aiosqlite
+
+        if self._initialized:
+            return
+
+        async with aiosqlite.connect(self.db_path) as db:
+            await db.execute(
+                """
+                CREATE TABLE IF NOT EXISTS todo_lists (
+                    id TEXT PRIMARY KEY,
+                    deal_id TEXT NOT NULL,
+                    ticker TEXT DEFAULT '',
+                    company_name TEXT DEFAULT '',
+                    title TEXT NOT NULL,
+                    description TEXT DEFAULT '',
+                    status TEXT DEFAULT 'draft',
+                    created_at TEXT NOT NULL
+                )
+            """
+            )
+            await db.execute(
+                """
+                CREATE TABLE IF NOT EXISTS todo_items (
+                    id TEXT PRIMARY KEY,
+                    list_id TEXT NOT NULL,
+                    title TEXT NOT NULL,
+                    description TEXT DEFAULT '',
+                    assigned_agent TEXT DEFAULT '',
+                    status TEXT DEFAULT 'pending',
+                    priority TEXT DEFAULT 'medium',
+                    item_order INTEGER DEFAULT 0,
+                    result TEXT,
+                    depends_on TEXT DEFAULT '[]',
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    FOREIGN KEY (list_id) REFERENCES todo_lists(id) ON DELETE CASCADE
+                )
+            """
+            )
+            await db.commit()
+
+        # Migration: Add ticker and company_name if they don't exist
+        import aiosqlite
+
+        async with aiosqlite.connect(self.db_path) as db:
+            try:
+                await db.execute(
+                    "ALTER TABLE todo_lists ADD COLUMN ticker TEXT DEFAULT ''"
+                )
+                await db.execute(
+                    "ALTER TABLE todo_lists ADD COLUMN company_name TEXT DEFAULT ''"
+                )
+                await db.commit()
+            except Exception:
+                # Columns likely already exist
+                pass
+
+        # Load existing data into cache
+        await self._load_cache()
+        self._initialized = True
+        self.logger.info("task_manager_initialized", db_path=self.db_path)
+
+    async def _load_cache(self):
+        """Load all lists and items from SQLite into the in-memory cache."""
+        import aiosqlite
+
+        self._lists.clear()
+        async with aiosqlite.connect(self.db_path) as db:
+            db.row_factory = aiosqlite.Row
+            async with db.execute("SELECT * FROM todo_lists") as cursor:
+                async for row in cursor:
+                    row_dict = dict(row)
+                    tl = TodoList(
+                        id=row_dict["id"],
+                        deal_id=row_dict["deal_id"],
+                        ticker=row_dict.get("ticker", ""),
+                        company_name=row_dict.get("company_name", ""),
+                        title=row_dict["title"],
+                        description=row_dict["description"],
+                        status=row_dict["status"],
+                        created_at=row_dict["created_at"],
+                    )
+                    self._lists[tl.id] = tl
+
+            async with db.execute(
+                "SELECT * FROM todo_items ORDER BY item_order"
+            ) as cursor:
+                async for row in cursor:
+                    item = TodoItem(
+                        id=row["id"],
+                        list_id=row["list_id"],
+                        title=row["title"],
+                        description=row["description"],
+                        assigned_agent=row["assigned_agent"],
+                        status=row["status"],
+                        priority=row["priority"],
+                        order=row["item_order"],
+                        result=json.loads(row["result"]) if row["result"] else None,
+                        depends_on=(
+                            json.loads(row["depends_on"]) if row["depends_on"] else []
+                        ),
+                        created_at=row["created_at"],
+                        updated_at=row["updated_at"],
+                    )
+                    if item.list_id in self._lists:
+                        self._lists[item.list_id].items.append(item)
+
+    async def _persist_list(self, todo: TodoList):
+        """Write a TodoList and all its items to SQLite."""
+        import aiosqlite
+
+        async with aiosqlite.connect(self.db_path) as db:
+            await db.execute(
+                "INSERT OR REPLACE INTO todo_lists (id, deal_id, ticker, company_name, title, description, status, created_at) VALUES (?,?,?,?,?,?,?,?)",
+                (
+                    todo.id,
+                    todo.deal_id,
+                    todo.ticker,
+                    todo.company_name,
+                    todo.title,
+                    todo.description,
+                    todo.status,
+                    todo.created_at,
+                ),
+            )
+            for item in todo.items:
+                await db.execute(
+                    "INSERT OR REPLACE INTO todo_items (id, list_id, title, description, assigned_agent, status, priority, item_order, result, depends_on, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+                    (
+                        item.id,
+                        item.list_id,
+                        item.title,
+                        item.description,
+                        item.assigned_agent,
+                        item.status,
+                        item.priority,
+                        item.order,
+                        json.dumps(item.result) if item.result else None,
+                        json.dumps(item.depends_on),
+                        item.created_at,
+                        item.updated_at,
+                    ),
+                )
+            await db.commit()
+
+    async def _persist_item(self, item: TodoItem):
+        """Write a single TodoItem to SQLite."""
+        import aiosqlite
+
+        async with aiosqlite.connect(self.db_path) as db:
+            await db.execute(
+                "INSERT OR REPLACE INTO todo_items (id, list_id, title, description, assigned_agent, status, priority, item_order, result, depends_on, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+                (
+                    item.id,
+                    item.list_id,
+                    item.title,
+                    item.description,
+                    item.assigned_agent,
+                    item.status,
+                    item.priority,
+                    item.order,
+                    json.dumps(item.result) if item.result else None,
+                    json.dumps(item.depends_on),
+                    item.created_at,
+                    item.updated_at,
+                ),
+            )
+            await db.commit()
+
     # ── CRUD ──────────────────────────────────────────────
-    def create_todo_list(
+    async def create_todo_list(
         self,
         deal_id: str,
         title: str,
         items: List[Dict[str, Any]],
         description: str = "",
+        ticker: str = "",
+        company_name: str = "",
     ) -> TodoList:
-        """Create a new todo list with tasks."""
-        todo = TodoList(deal_id=deal_id, title=title, description=description)
+        """Create a new todo list with tasks and persist to SQLite."""
+        await self.initialize()
+        todo = TodoList(
+            deal_id=deal_id,
+            title=title,
+            description=description,
+            ticker=ticker,
+            company_name=company_name,
+        )
         for i, item_data in enumerate(items):
             todo.items.append(
                 TodoItem(
@@ -265,21 +537,25 @@ class TaskManager:
                 )
             )
         self._lists[todo.id] = todo
+        await self._persist_list(todo)
         self.logger.info(
             "todo_list_created", list_id=todo.id, deal_id=deal_id, tasks=len(todo.items)
         )
         return todo
 
-    def get_todo_list(self, list_id: str) -> Optional[TodoList]:
+    async def get_todo_list(self, list_id: str) -> Optional[TodoList]:
+        await self.initialize()
         return self._lists.get(list_id)
 
-    def get_lists_for_deal(self, deal_id: str) -> List[TodoList]:
+    async def get_lists_for_deal(self, deal_id: str) -> List[TodoList]:
+        await self.initialize()
         return [tl for tl in self._lists.values() if tl.deal_id == deal_id]
 
-    def update_task(
+    async def update_task(
         self, list_id: str, task_id: str, updates: Dict[str, Any]
     ) -> Optional[TodoItem]:
-        """Update a specific task's fields."""
+        """Update a specific task's fields and persist."""
+        await self.initialize()
         todo = self._lists.get(list_id)
         if not todo:
             return None
@@ -293,20 +569,32 @@ class TaskManager:
                     ):
                         setattr(item, key, value)
                 item.updated_at = datetime.utcnow().isoformat()
+                await self._persist_item(item)
                 return item
         return None
 
-    def delete_task(self, list_id: str, task_id: str) -> bool:
-        """Remove a task from a list."""
+    async def delete_task(self, list_id: str, task_id: str) -> bool:
+        """Remove a task from a list and from SQLite."""
+        await self.initialize()
+        import aiosqlite
+
         todo = self._lists.get(list_id)
         if not todo:
             return False
         original_len = len(todo.items)
         todo.items = [i for i in todo.items if i.id != task_id]
-        return len(todo.items) < original_len
+        if len(todo.items) < original_len:
+            async with aiosqlite.connect(self.db_path) as db:
+                await db.execute("DELETE FROM todo_items WHERE id = ?", (task_id,))
+                await db.commit()
+            return True
+        return False
 
-    def add_task(self, list_id: str, item_data: Dict[str, Any]) -> Optional[TodoItem]:
-        """Add a new task to an existing list."""
+    async def add_task(
+        self, list_id: str, item_data: Dict[str, Any]
+    ) -> Optional[TodoItem]:
+        """Add a new task to an existing list and persist."""
+        await self.initialize()
         todo = self._lists.get(list_id)
         if not todo:
             return None
@@ -321,17 +609,28 @@ class TaskManager:
             order=len(todo.items),
         )
         todo.items.append(item)
+        await self._persist_item(item)
         return item
 
-    def approve_list(self, list_id: str) -> Optional[TodoList]:
-        """Mark a todo list as approved (ready for execution)."""
+    async def approve_list(self, list_id: str) -> Optional[TodoList]:
+        """Mark a todo list as approved and persist."""
+        await self.initialize()
+        import aiosqlite
+
         todo = self._lists.get(list_id)
         if todo:
             todo.status = "approved"
+            async with aiosqlite.connect(self.db_path) as db:
+                await db.execute(
+                    "UPDATE todo_lists SET status = ? WHERE id = ?",
+                    ("approved", list_id),
+                )
+                await db.commit()
         return todo
 
-    def reorder_tasks(self, list_id: str, task_ids: List[str]) -> bool:
-        """Reorder tasks based on provided ID sequence."""
+    async def reorder_tasks(self, list_id: str, task_ids: List[str]) -> bool:
+        """Reorder tasks and persist new order."""
+        await self.initialize()
         todo = self._lists.get(list_id)
         if not todo:
             return False
@@ -341,12 +640,13 @@ class TaskManager:
             if tid in id_to_item:
                 id_to_item[tid].order = idx
                 new_items.append(id_to_item[tid])
-        # Add any items not in the reorder list at the end
         for item in todo.items:
             if item.id not in task_ids:
                 item.order = len(new_items)
                 new_items.append(item)
         todo.items = new_items
+        # Persist new order
+        await self._persist_list(todo)
         return True
 
     # ── Auto-assignment ───────────────────────────────────
@@ -363,8 +663,9 @@ class TaskManager:
         return best_agent
 
     # ── Execution helpers ─────────────────────────────────
-    def get_next_tasks(self, list_id: str) -> List[TodoItem]:
+    async def get_next_tasks(self, list_id: str) -> List[TodoItem]:
         """Get tasks that are ready to execute (pending + dependencies met)."""
+        await self.initialize()
         todo = self._lists.get(list_id)
         if not todo:
             return []
@@ -376,15 +677,22 @@ class TaskManager:
                     ready.append(item)
         return ready
 
-    def mark_task_result(
+    async def mark_task_result(
         self, list_id: str, task_id: str, result: Dict[str, Any]
     ) -> None:
-        """Store the result of an executed task."""
-        self.update_task(list_id, task_id, {"status": "done", "result": result})
-        # Check if all tasks are done
+        """Store the result of an executed task and persist."""
+        await self.update_task(list_id, task_id, {"status": "done", "result": result})
+        import aiosqlite
+
         todo = self._lists.get(list_id)
         if todo and all(i.status == "done" for i in todo.items):
             todo.status = "completed"
+            async with aiosqlite.connect(self.db_path) as db:
+                await db.execute(
+                    "UPDATE todo_lists SET status = ? WHERE id = ?",
+                    ("completed", list_id),
+                )
+                await db.commit()
 
 
 # ── Singleton ─────────────────────────────────────────────

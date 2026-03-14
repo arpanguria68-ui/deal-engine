@@ -85,7 +85,7 @@ class GenerateICMemoTool(BaseTool):
             "required": ["ticker", "deal_name", "sections"],
         }
 
-    def execute(
+    async def execute(
         self,
         ticker: str = "",
         deal_name: str = "",
@@ -422,7 +422,7 @@ class GenerateDealDeckTool(BaseTool):
             "required": ["ticker", "deal_name"],
         }
 
-    def execute(
+    async def execute(
         self,
         ticker: str = "",
         deal_name: str = "",

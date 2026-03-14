@@ -12,6 +12,8 @@ class Settings(BaseSettings):
     APP_NAME: str = "DealForge AI"
     APP_VERSION: str = "1.0.0"
     DEBUG: bool = False
+    DATA_DIR: str = "data"
+    REPORTS_DIR: str = "reports"
 
     # Database
     DATABASE_URL: str = (
@@ -34,10 +36,21 @@ class Settings(BaseSettings):
 
     # Gemini
     GEMINI_API_KEY: Optional[str] = None
-    GEMINI_MODEL: str = "gemini-1.5-pro"
+    GEMINI_MODEL: str = "gemini-1.5-flash"
+
+    # Vertex AI
+    VERTEX_API_KEY: Optional[str] = None
+    VERTEX_PROJECT_ID: Optional[str] = None
+    VERTEX_LOCATION: str = "us-central1"
+    VERTEX_MODEL: str = "gemini-1.5-flash-002"
+
+    # NVIDIA
+    NVIDIA_API_KEY: Optional[str] = None
+    NVIDIA_BASE_URL: str = "https://integrate.api.nvidia.com/v1"
+    NVIDIA_MODEL: str = "z-ai/glm5"
 
     # Local LLMs
-    DEFAULT_LLM_PROVIDER: str = "gemini"  # gemini, openai, mistral, ollama, lmstudio
+    DEFAULT_LLM_PROVIDER: str = "gemini"  # gemini, vertex, openai, mistral, ollama, lmstudio
     OLLAMA_BASE_URL: str = "http://localhost:11434"
     OLLAMA_MODEL: str = "llama3"
     LMSTUDIO_BASE_URL: str = "http://localhost:1234/v1"
@@ -48,6 +61,13 @@ class Settings(BaseSettings):
     PAGEINDEX_BASE_URL: str = "https://api.vectify.ai/v1"
     PAGEINDEX_MODE: str = "local"  # "local" (self-hosted) or "cloud" (VectifyAI API)
     PAGEINDEX_STORAGE_DIR: Optional[str] = None  # Local storage path for indexes
+
+    # Financial Data
+    FMP_API_KEY: Optional[str] = None
+    FINANCIAL_DATASETS_API_KEY: Optional[str] = None
+    ALPHA_VANTAGE_API_KEY: Optional[str] = None
+    FINNHUB_API_KEY: Optional[str] = None
+    SEC_API_KEY: Optional[str] = None  # Optional — for sec-api.io paid tier
 
     # Agent Settings
     MAX_AGENT_ITERATIONS: int = 10

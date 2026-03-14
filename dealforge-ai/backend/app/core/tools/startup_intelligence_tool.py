@@ -114,21 +114,9 @@ class StartupIntelligenceTool(BaseTool):
             logger.error("startup_intel_error", company=company, error=str(e))
             return ToolResult(success=False, data=None, error=str(e))
 
-    def execute(self, company: str = "", depth: str = "standard") -> ToolResult:
-        """Synchronous wrapper for the async method."""
-        try:
-            loop = asyncio.get_event_loop()
-            if loop.is_running():
-                import concurrent.futures
-
-                with concurrent.futures.ThreadPoolExecutor() as pool:
-                    result = pool.submit(
-                        asyncio.run, self.execute_async(company, depth)
-                    ).result()
-                return result
-            return asyncio.run(self.execute_async(company, depth))
-        except Exception as e:
-            return ToolResult(success=False, data=None, error=str(e))
+    async def execute(self, company: str = "", depth: str = "standard") -> ToolResult:
+        """Execute startup intelligence gathering."""
+        return await self.execute_async(company, depth)
 
     async def _multi_search(
         self, company: str, query_keys: List[str]

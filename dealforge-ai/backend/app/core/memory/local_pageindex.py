@@ -128,14 +128,25 @@ class LocalPageIndexService:
 
     @staticmethod
     def _default_storage_dir() -> str:
-        """Default storage location"""
-        return os.path.join(
-            os.path.dirname(os.path.abspath(__file__)),
-            "..",
-            "..",
-            "..",
-            "pageindex_data",
-        )
+        """Default storage location - honors DATA_DIR for persistence"""
+        from app.config import get_settings
+
+        settings = get_settings()
+        data_dir = settings.DATA_DIR
+
+        # If DATA_DIR is absolute, use it. Otherwise, resolve relative to app root.
+        if os.path.isabs(data_dir):
+            base = data_dir
+        else:
+            base = os.path.join(
+                os.path.dirname(os.path.abspath(__file__)),
+                "..",
+                "..",
+                "..",
+                data_dir,
+            )
+
+        return os.path.join(base, "pageindex")
 
     # ===== Catalog Management =====
 
@@ -622,6 +633,7 @@ class LocalPageIndexService:
             "storage_bytes": total_size,
             "storage_mb": round(total_size / (1024 * 1024), 2),
             "storage_dir": str(self.storage_dir),
+            "documents": [asdict(d) for d in self.catalog.values()],
         }
 
     # ===== Utility =====

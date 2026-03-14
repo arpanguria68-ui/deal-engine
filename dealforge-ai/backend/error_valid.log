@@ -1,0 +1,43 @@
+﻿python : F:\code project\Kimi_Agent_DealForge AI PRD\dealforge-ai\backend\app\core\llm\gemini_client.py:29: FutureWarning: 
+At line:1 char:1
++ python f:\tmp\verify_compiler.py 2> error.log
++ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (F:\code project...FutureWarning: :String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+ 
+
+All support for the `google.generativeai` package has ended. It will no longer be receiving 
+updates or bug fixes. Please switch to the `google.genai` package as soon as possible.
+See README for more details:
+
+https://github.com/google-gemini/deprecated-generative-ai-python/blob/main/README.md
+
+  import google.generativeai as genai
+Traceback (most recent call last):
+  File "f:\tmp\verify_compiler.py", line 118, in <module>
+    asyncio.run(test_compiler())
+    ~~~~~~~~~~~^^^^^^^^^^^^^^^^^
+  File "C:\Program Files\WindowsApps\PythonSoftwareFoundation.Python.3.13_3.13.3312.0_x64__qbz5n2kfra8p0\Lib\asyncio\runners.py", line 195, in run
+    return runner.run(main)
+           ~~~~~~~~~~^^^^^^
+  File "C:\Program Files\WindowsApps\PythonSoftwareFoundation.Python.3.13_3.13.3312.0_x64__qbz5n2kfra8p0\Lib\asyncio\runners.py", line 118, in run
+    return self._loop.run_until_complete(task)
+           ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^
+  File "C:\Program Files\WindowsApps\PythonSoftwareFoundation.Python.3.13_3.13.3312.0_x64__qbz5n2kfra8p0\Lib\asyncio\base_events.py", line 725, in 
+run_until_complete
+    return future.result()
+           ~~~~~~~~~~~~~^^
+  File "f:\tmp\verify_compiler.py", line 82, in test_compiler
+    result = await compiler.run(
+             ^^^^^^^^^^^^^^^^^^^
+        "Compile the final deliverables for this deal", context=context
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    )
+    ^
+  File "F:\code project\Kimi_Agent_DealForge AI PRD\dealforge-ai\backend\app\agents\compiler_agent.py", line 40, in run
+    response = await self.generate_with_tools(prompt, system_prompt)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "f:\tmp\verify_compiler.py", line 32, in generate_with_tools
+    from app.core.tools.tool_router import get_tool_router
+ImportError: cannot import name 'get_tool_router' from 'app.core.tools.tool_router' (F:\code project\Kimi_Agent_DealForge AI 
+PRD\dealforge-ai\backend\app\core\tools\tool_router.py)

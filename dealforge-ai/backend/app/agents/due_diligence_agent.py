@@ -27,7 +27,8 @@ class CommercialDueDiligenceAgent(BaseAgent):
     """
 
     name = "due_diligence_agent"
-    description = "Commercial due diligence — CIM analysis, peer identification, thesis validation, synergy analysis"
+    description: str = "Commercial due diligence — CIM analysis, peer identification, thesis validation, synergy analysis"
+    recommended_model: str = "Gemini 1.5 Pro (Strategic Analysis)"
 
     async def run(self, task: str, context: Optional[Dict] = None) -> AgentOutput:
         start = datetime.utcnow()
@@ -106,6 +107,8 @@ ANALYSIS FRAMEWORK:
 
 CITATION RULE: When referencing specific data or facts from the provided documents,
 note the source by referencing the document chunk or page number.
+
+SEARCH RULE: When using web search tools, always append "Financial Services" or the company's full legal name to disambiguate the search (e.g., "Discover Financial Services M&A" instead of just "Discover").
 
 OUTPUT: Respond with structured JSON containing your assessment and source_citations."""
 

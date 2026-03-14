@@ -1,0 +1,19 @@
+sector: technology
+emphasis:
+  - agent: ai_tech_diligence_agent
+    weight: 1.0
+  - agent: due_diligence_agent
+    weight: 0.8
+  - agent: compliance_qa_agent
+    weight: 0.9
+  - agent: esg_agent
+    weight: 0.3
+custom_prompts:
+  financial_analyst: "Focus heavily on recurring revenue metrics (ARR), Net Retention Rate (NRR), and Customer Acquisition Cost (CAC) to LTV ratio. CapEx is typically low."
+  due_diligence_agent: "Evaluate AI model defensibility, open-source dependencies, and API lock-in risks."
+  compliance_qa_agent: "Ensure deep cybersecurity vulnerability scans and data privacy (GDPR/Schrems II) compliance, as tech firms handle PII."
+checklists:
+  - "Cloud infrastructure lock-in risk"
+  - "AI model training data provenance"
+  - "API dependency mapping"
+  - "Open-source license (Copyleft) exposure"

@@ -15,7 +15,8 @@ class TreasuryCashAgent(BaseAgent):
     """Treasury Cash Positioning Agent — liquidity forecasting and cash management."""
 
     name = "treasury_agent"
-    description = "Cash positioning, liquidity forecasting, currency exposure analysis"
+    description: str = "Cash positioning, liquidity forecasting, currency exposure analysis"
+    recommended_model: str = "Gemini 1.5 Pro (Treasury Analysis)"
 
     async def run(self, task: str, context: Optional[Dict] = None) -> AgentOutput:
         start = datetime.utcnow()
@@ -100,9 +101,10 @@ class FPAForecastingAgent(BaseAgent):
     """FP&A Forecasting Agent — scenario-based financial planning."""
 
     name = "fpa_forecasting_agent"
-    description = (
+    description: str = (
         "Financial planning & analysis with scenario modeling and variance analysis"
     )
+    recommended_model: str = "Gemini 1.5 Pro (Scenario Modeling)"
 
     async def run(self, task: str, context: Optional[Dict] = None) -> AgentOutput:
         start = datetime.utcnow()
@@ -153,9 +155,10 @@ class TaxComplianceAgent(BaseAgent):
     """Tax & Regulatory Compliance Agent."""
 
     name = "tax_compliance_agent"
-    description = (
+    description: str = (
         "Tax provision calculations, regulatory compliance, transfer pricing analysis"
     )
+    recommended_model: str = "Gemini 1.5 Pro (Tax & Regulatory)"
 
     async def run(self, task: str, context: Optional[Dict] = None) -> AgentOutput:
         start = datetime.utcnow()

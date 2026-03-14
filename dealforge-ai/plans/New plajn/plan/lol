@@ -1,0 +1,318 @@
+## Overview
+
+These 6 flows define the corrected user journey through DealForge AI to achieve 100% replication of a PE/consulting analyst. They cover the complete lifecycle: from deal creation with stage selection, through provenance-tracked agent execution, to auditable analyst-grade reports.
+
+All 4 existing entry paths (Chat Pipeline, Full Workflow, OFAS Mission, Direct Agent Run) converge on the same agent execution layer — meaning these flow corrections improve every path simultaneously.
+
+### Design Decisions (agreed)
+
+
+| Decision                   | Choice                                                                                           |
+| -------------------------- | ------------------------------------------------------------------------------------------------ |
+| Provenance surfacing       | All three layers: inline in agent output, separate audit ledger, and source footnotes in reports |
+| Cross-agent contradictions | Soft warning — log and continue, surface in results and reports                                  |
+| Missing data in reports    | Estimates with disclosure — labeled `[ESTIMATED]` with methodology                               |
+| Deal stage selection       | User-selected — optional, defaults to "deep_dive" for backward compatibility                     |
+
+
+---
+
+## Flow 1: Deal Setup with Stage Selection
+
+**Description:** User creates a new deal and explicitly selects the analysis stage, which determines the depth and format of all agent outputs downstream.
+
+**Trigger:** User navigates to the deal creation screen or calls the create-deal API.
+
+**Steps:**
+
+1. User enters deal details: deal name, target company, and industry.
+2. User optionally selects a **Deal Stage** from three options (defaults to **Deep-Dive** if not specified):
+  - **Screening** — Quick go/no-go assessment. Agents produce 1-page summaries, focus on thesis validation and red flags.
+  - **Deep-Dive** *(default)* — Full workstream analysis. Agents produce comprehensive structured output with sourced data tables and risk matrices.
+  - **IC Memo** — Investment Committee preparation. Agents produce Pyramid Principle (SCQA) formatted deliverables with executive recommendations.
+3. Optionally, user enters a **buyer thesis** (free text, e.g., "Strategic acquisition to expand into enterprise SaaS") and **deal goal** (e.g., "Determine fair valuation range for a controlling stake").
+4. User submits. System creates the deal and confirms with deal ID, stage, and a summary of what to expect ("Screening: agents will produce quick assessments in ~2 minutes").
+5. User may optionally upload deal documents (PDF, DOCX) before running the workflow. Documents are indexed with the deal ID as a metadata filter.
+
+**Key change from current:** Deal creation now captures `deal_stage`, `buyer_thesis`, and `deal_goal` — which are injected into every agent's system prompt during execution.
+
+```mermaid
+sequenceDiagram
+    participant U as User
+    participant UI as DealForge UI
+    participant API as Backend API
+    participant KB as Knowledge Base
+
+    U->>UI: Fill deal form (name, company, industry)
+    U->>UI: Select stage (Screening / Deep-Dive / IC Memo)
+    U->>UI: Enter buyer thesis & deal goal (optional)
+    U->>UI: Submit
+    UI->>API: POST /deals (with stage, thesis, goal)
+    API-->>UI: Deal created (ID, stage confirmation)
+    UI-->>U: "Deal ready — Screening mode. Upload docs or run workflow."
+    opt Upload Documents
+        U->>UI: Upload PDF / DOCX
+        UI->>API: POST /documents/upload (deal_id)
+        API->>KB: Index with deal_id metadata filter
+        KB-->>API: Indexed (chunks, pages)
+        API-->>UI: "Document indexed — 42 chunks from 15 pages"
+    end
+```
+
+---
+
+## Flow 2: Tool-Backed Agent Execution with Provenance
+
+**Description:** When any agent runs a task, it fetches real data from external tools and indexed documents — never hallucinating. Every data point is tracked with full provenance from source to final claim.
+
+**Trigger:** Any agent is invoked — via full workflow, OFAS mission, chat pipeline, or direct agent run.
+
+**Steps:**
+
+1. The agent receives its task and deal context (company, ticker, industry, stage, buyer thesis).
+2. The agent queries the knowledge base with a **semantic question** (not keyword-stuffed), filtered by deal ID as metadata — not appended as raw text.
+3. The agent calls the LLM with task prompt, retrieved context, and its assigned tool schemas. The LLM call routes through the central gateway, which enforces rate limits, retries with backoff, and falls back across providers if needed.
+4. The LLM returns tool call requests. The agent executes them and captures each result with a **provenance record**: tool name, parameters, timestamp, raw response, and data freshness indicator.
+5. Tool results are fed back to the LLM. If the initial results raise follow-up questions (e.g., found revenue but need margin data), the agent performs **additional tool call rounds** (up to 3 iterations) before final synthesis.
+6. The agent produces its final output. Every quantitative claim includes an inline `sources` array referencing specific provenance records. Claims without tool backing are explicitly marked as `[ESTIMATED]` with the estimation methodology.
+7. During workflow execution, provenance records are stored in the real-time cache (Redis) for immediate access — enabling live monitoring of data sources as agents work. On workflow completion, all records are flushed to the long-term audit store (PostgreSQL) for permanent retention and compliance queries. Records are linked to the deal ID and agent name.
+8. If a tool call fails (API error, missing key), the agent logs a clear warning in its output: "⚠ Tool `finnhub_data` failed: API key not configured. Revenue data is estimated from web search results."
+9. If a local LLM produces malformed JSON for a tool call, the system attempts JSON repair (fixing missing brackets, unquoted keys, trailing commas). If repair succeeds, the tool executes normally. If repair fails, the agent proceeds without that tool's data and logs: "⚠ Local LLM produced unrecoverable tool-call format — proceeding without tool data for this step."
+
+**Key changes from current:**
+
+- All agents use the tool-calling path (no direct LLM bypass)
+- All LLM calls route through the central gateway (rate limits, fallback)
+- Multi-round tool calling (up to 3 iterations, not single-shot)
+- Every data point carries provenance metadata
+- RAG queries use semantic questions with deal_id metadata filtering
+
+```mermaid
+sequenceDiagram
+    participant O as Orchestrator
+    participant A as Agent
+    participant GW as LLM Gateway
+    participant T as Tools
+    participant KB as Knowledge Base
+    participant AL as Audit Ledger
+
+    O->>A: Run task with deal context (stage, thesis)
+    A->>KB: Semantic query (filtered by deal_id)
+    KB-->>A: Relevant document chunks
+    A->>GW: Task + context + tool schemas
+    Note over GW: Rate check → fallback chain → retry
+    GW-->>A: Tool call request
+    A->>T: Execute tool (e.g., fetch_financial_statements)
+    T-->>A: Raw data + timestamp
+    A->>AL: Store provenance record
+    A->>GW: Follow-up with tool results
+    GW-->>A: More tool calls needed?
+    opt Iterative Research (up to 3 rounds)
+        A->>T: Additional tool calls
+        T-->>A: More data
+        A->>AL: Store provenance records
+        A->>GW: Synthesize with all data
+    end
+    GW-->>A: Final cited analysis
+    A->>AL: Link claims → provenance records
+    A-->>O: Output with inline sources
+```
+
+---
+
+## Flow 3: Cross-Agent Consistency Monitoring
+
+**Description:** After parallel agents complete, the system automatically checks for contradictions between their outputs. Contradictions are logged as soft warnings — execution continues, but warnings are visible in monitoring, results, and final reports.
+
+**Trigger:** Parallel analysis phase completes (financial, legal, risk, and market agents all return results).
+
+**Steps:**
+
+1. The orchestrator collects outputs from all parallel agents.
+2. **Check Point 1 (after parallel analysis):** A consistency check runs using the extended HaluGate engine in cross-agent mode. It applies the following rules against the four parallel agent outputs:
+  - **Revenue vs. TAM:** Financial analyst's reported revenue is compared against market researcher's TAM. If revenue exceeds TAM → **material** contradiction.
+  - **Growth alignment:** Financial analyst's projected growth rate vs. market researcher's market growth rate. If they differ by more than 15 percentage points → **material** contradiction.
+  - **Risk coverage:** Risk assessor's flagged risk categories vs. legal advisor's risk mentions. If a risk is flagged by one agent but entirely absent from the other → **minor** discrepancy.
+3. **Check Point 2 (after business analyst synthesis):** A second consistency check runs after the business analyst has produced its synthesis. This applies one additional rule:
+  - **Revenue consistency:** Financial analyst's revenue figure vs. business analyst's revenue in synthesis. If values differ by more than 10% → **material** contradiction.  
+   Any new warnings from Check Point 2 are appended to the existing consistency warnings from Check Point 1.
+4. Each contradiction is logged as a **consistency warning** on the deal state, including: the two conflicting claims, which agents produced them, and the severity. Severity is classified by threshold: numeric discrepancies exceeding 10% are **material**; categorical mismatches (risk flagged vs. not mentioned) are **minor**. Material contradictions carry a default scoring penalty of -5% each.
+5. The workflow **continues** — it does not pause. The warnings flow downstream:
+  - **Red Team** receives the contradiction list and is instructed to stress-test the conflicting claims specifically.
+  - **Scoring** applies a penalty factor for unresolved material contradictions.
+  - **Report generation** includes a "Data Consistency Notes" section listing all flagged contradictions with their resolution status.
+6. The user can see consistency warnings in the deal monitoring view at any time — they appear as yellow/orange alerts alongside agent progress.
+7. If a user is actively watching the monitoring dashboard, contradictions appear in real-time as agents complete. No action is required during workflow execution — they are informational.
+8. **User resolution:** After workflow completion, the user can review each consistency warning in the deal detail view. For each warning, the user can mark it as **resolved** with a resolution note (e.g., "Revenue includes adjacent market segments not captured in TAM definition"). Only the user can resolve warnings — the system never auto-resolves. Unresolved material warnings remain visible in reports and contribute to the scoring penalty.
+
+**Key change from current:** Currently HaluGate only runs once at the end. This flow adds two consistency check points — one after parallel analysis, and one after business analyst synthesis — and the warnings propagate through the entire downstream pipeline. Users have full control over warning resolution via UI or API.
+
+```mermaid
+sequenceDiagram
+    participant O as Orchestrator
+    participant FA as Financial Analyst
+    participant MR as Market Researcher
+    participant CC as Consistency Checker
+    participant RT as Red Team
+    participant SC as Scorer
+    participant U as User (monitoring)
+
+    FA-->>O: Revenue = $15B, margins = 22%
+    MR-->>O: TAM = $10B, market growth = 18%
+    O->>CC: Compare agent outputs
+    CC-->>O: ⚠ Revenue ($15B) exceeds reported TAM ($10B)
+    O-->>U: Yellow alert in monitoring view
+    Note over O: Workflow continues (soft warning)
+    O->>RT: Run red team (with contradiction list)
+    RT-->>O: "Revenue/TAM mismatch is material — likely different definitions"
+    O->>SC: Score deal (contradiction penalty applied)
+    SC-->>O: Deal score: 67% (includes -8% consistency penalty)
+```
+
+---
+
+## Flow 4: Deal Scoring with Real Agent Data
+
+**Description:** The deal scorer consumes actual agent output fields through a mapping layer, producing scores grounded in real data — not decorative numbers from mismatched schemas.
+
+**Trigger:** All required agents have completed and the workflow reaches the scoring phase.
+
+**Steps:**
+
+1. The orchestrator passes all agent outputs to the scoring phase.
+2. An **output adapter** maps each agent's actual output fields to the scorer's expected input schema using a three-tier resolution strategy:
+  - **Tier 1 — Static path matching:** A declarative mapping with multiple known field paths per scorer input (e.g., `market_output.market_size.tam` or `market_output.tam` → scorer's `total_addressable_market`).
+  - **Tier 2 — Regex key scanning:** If no static path matches, all agent output keys are scanned for patterns (e.g., any key containing "revenue" with a numeric value).
+  - **Tier 3 — LLM extraction fallback:** If neither static nor regex resolves the field, a lightweight LLM call extracts the value (e.g., "Extract the annual revenue from this agent output"). This adds ~2-3 seconds but maximizes data coverage.
+   Example mappings: Market researcher's `market_size.tam` → scorer's `total_addressable_market`; Financial analyst's revenue data → scorer's `annual_revenue`; Risk assessor's risk lists → scorer's `legal_risks`.
+3. For fields that no agent produced, the adapter marks them as `unavailable` rather than defaulting to zero. The scorer handles unavailable fields using a **fixed penalty model**: each unavailable field reduces the component's score by -0.05 and its confidence by -0.1. For example, if the market component has 4 scored fields and 2 are unavailable, the component score is penalized by -0.10 and confidence drops by -0.20. This prevents missing data from silently zeroing out a component while still signaling reduced reliability.
+4. The scorer calculates weighted component scores (market, financials, risk, strategic fit, etc.) and produces a total deal score with confidence level and risk rating.
+5. Any consistency warnings from Flow 3 apply a configurable penalty (default: -5% per material contradiction) to the total score.
+6. The scoring result includes: total score, component breakdown, red flags, green flags, recommendations, and a **data coverage breakdown** with three tiers: `tool_sourced` (data directly from tool APIs), `llm_extracted` (values resolved by the LLM extraction fallback), and `unavailable` (no data found). For example, a deal might show "85% tool-sourced, 10% LLM-extracted, 5% unavailable" — giving the user transparency into score reliability.
+7. User sees the scored result in the deal detail view with the full component breakdown and data coverage indicator.
+
+**Key change from current:** The scorer is no longer decorative. A mapping layer translates real agent outputs into scorer inputs, and missing data reduces confidence rather than silently zeroing out.
+
+---
+
+## Flow 5: Report Generation with Integrity
+
+**Description:** The system generates analyst-grade reports (PPTX, Excel, PDF) with no fabricated data. Missing data is replaced by clearly labeled estimates with methodology. Every data point carries a source footnote.
+
+**Trigger:** User requests a report download for a completed (or in-progress) deal.
+
+**Steps:**
+
+1. User clicks "Download Report" and selects format (PPTX, Excel, PDF).
+2. The system collects all agent outputs and their provenance records for this deal.
+3. The Business Analyst agent synthesizes agent outputs into a report payload using the SCQA framework (Situation, Complication, Question, Answer) — adapted to the deal's selected stage:
+  - **Screening:** Compact 3-slide PPTX (or 1-page PDF) — executive summary with go/no-go signal, top 3 risks, key metrics table, and thesis validation verdict.
+  - **Deep-Dive:** Full multi-section report (10-15 slides PPTX, multi-tab Excel) — comprehensive data tables, sourced financials, comparable company analysis, risk matrix, and market sizing with methodology.
+  - **IC Memo:** Pyramid Principle layout — recommendation-first executive brief, then grouped supporting arguments, then detailed evidence appendix. SCQA-structured cover slide.
+4. For every data point in the report:
+  - If **tool-sourced**: the value is displayed with a source footnote (e.g., "Revenue: $15.2B ¹" where footnote reads "¹ Source: SEC EDGAR 10-K FY2024, retrieved 2025-03-08").
+  - If **no tool data available**: the value is displayed as `[ESTIMATED]` with methodology (e.g., "Revenue: $120M [ESTIMATED] — Based on industry median EV/Revenue multiple of 8.5x applied to estimated ARR from web search results").
+  - **Never** fabricated silently with hardcoded multipliers.
+5. If consistency warnings exist (from Flow 3), a "Data Consistency Notes" section is appended listing the contradictions and how they were handled.
+6. The report footer includes: generation date, LLM providers used, data freshness summary (oldest data point date), and overall data coverage percentage.
+7. The report is returned as a downloadable file.
+
+**Key changes from current:**
+
+- No fabricated projections — every number is either tool-sourced (with footnote) or estimated (with disclosure)
+- Stage-aware formatting (screening vs deep-dive vs IC memo)
+- Source footnotes on every data point
+- Data consistency notes section
+- Data freshness and coverage metadata in footer
+
+---
+
+## Flow 6: Provenance Audit Trail
+
+**Description:** Users can trace any data point in a deal's results back to its original source — which tool fetched it, when, what the raw response was, and which agent used it. Available via API query and linked from report footnotes.
+
+**Trigger:** User wants to verify a specific data point, or compliance requires an audit trail.
+
+**Steps:**
+
+1. User navigates to a deal's detail view and sees the agent results. Each data point with a source footnote has a clickable reference number.
+2. Clicking a reference opens a provenance detail showing:
+  - **Source tool**: e.g., "finnhub_data"
+  - **Parameters sent**: e.g., `{"ticker": "MSFT", "metric": "revenue"}`
+  - **Raw response**: the exact data returned by the tool
+  - **Timestamp**: when the data was fetched
+  - **Data freshness**: how old the underlying data is (e.g., "FY2024 10-K, filed 2025-02-14")
+  - **Agent**: which agent consumed this data
+  - **Claim**: the final claim in the report that references this data
+3. Alternatively, user can query the audit ledger via API, filtering by deal ID, agent, tool name, or date range. This returns a structured log of all provenance records.
+4. For compliance or export purposes, the full provenance chain for a deal can be exported as a JSON document — containing every tool call, every raw response, every agent claim, and the linking between them.
+
+**Provenance data lifecycle:** During workflow execution, provenance records are available in real-time from the cache layer (Redis), enabling live drill-down as agents work. After workflow completion, records are permanently stored in the audit database (PostgreSQL) for long-term compliance queries. For abandoned workflows that never complete, cached provenance records expire after 24 hours — this prevents storage buildup from incomplete runs.
+
+**Key change from current:** Currently tool results are consumed and discarded inside `generate_with_tools()`. This flow introduces a persistent audit ledger that captures and links every data point from source to final claim.
+
+```mermaid
+sequenceDiagram
+    participant U as User
+    participant UI as Deal Detail View
+    participant API as Backend API
+    participant AL as Audit Ledger
+
+    U->>UI: View deal results
+    UI-->>U: Agent results with source footnotes (¹ ² ³)
+    U->>UI: Click footnote ²
+    UI->>API: GET /deals/{id}/provenance?ref=2
+    API->>AL: Query provenance record
+    AL-->>API: Tool: finnhub_data, Params: {ticker: MSFT}, Raw: {...}, Timestamp: 2025-03-08T14:22Z
+    API-->>UI: Provenance detail
+    UI-->>U: Source: finnhub_data | Data: FY2024 Revenue $245.1B | Fetched: Mar 8, 2025 | Agent: financial_analyst
+    opt Full Audit Export
+        U->>API: GET /deals/{id}/provenance?export=json
+        API->>AL: Query all records for deal
+        AL-->>API: Complete provenance chain
+        API-->>U: Download provenance_audit.json
+    end
+```
+
+---
+
+## Cross-Cutting Concerns
+
+These behaviors apply across all 6 flows:
+
+### LLM Resilience
+
+All LLM calls route through the central gateway. When a provider's rate limit is hit, the system automatically falls back (e.g., Gemini → Mistral → local LLM). The actual provider used is logged in provenance. Deterministic calls (temperature=0) are cached to avoid duplicate quota consumption.
+
+### Data Freshness Awareness
+
+Every tool result includes a freshness indicator. When data is older than 12 months, agents include a staleness warning in their output: "⚠ This 10-K is from FY2022 — consider requesting updated filings." The report footer shows the oldest data point's date.
+
+### Local LLM Reliability
+
+When agents are routed to local LLMs, tool schemas are injected as ReAct-style instructions. If the local model produces malformed JSON tool calls, the system attempts JSON repair before falling back to cloud. Complex reasoning agents (DCF/LBO modeling, IC memo synthesis) are always routed to cloud or large local models (14B+).
+
+### Iterative Tool Research
+
+Agents can perform up to 3 rounds of tool calls per task. Each round's results are accumulated and passed to the next. This enables multi-hop research: "found revenue → need EBITDA margins → found margins → noticed a discrepancy → search for explanation." The iteration count and all intermediate results are captured in provenance.
+
+### Graceful Degradation
+
+If the real-time cache (Redis) is unavailable during workflow execution, provenance records are buffered in-memory on the agent process and flushed directly to the long-term store (PostgreSQL) on workflow completion. Users experience no data loss, but real-time provenance drill-down in the monitoring dashboard will be temporarily unavailable until the cache recovers. All other flows (agent execution, scoring, report generation) continue unaffected.
+
+---
+
+## Flow Summary Matrix
+
+
+| Flow                               | Issues Addressed                                                            | User-Visible Change                                                   |
+| ---------------------------------- | --------------------------------------------------------------------------- | --------------------------------------------------------------------- |
+| 1. Deal Setup with Stage           | Issue 2 (stage-aware formatting)                                            | New stage selector + thesis fields on deal creation                   |
+| 2. Agent Execution with Provenance | Issues 1, 6, 8, 9 (tool bypass, iterative research, freshness, audit trail) | Agents use real tools, multi-round research, every claim has a source |
+| 3. Cross-Agent Consistency         | Issue 7 (no cross-validation)                                               | Yellow alerts in monitoring when agents contradict                    |
+| 4. Deal Scoring                    | Issue 4 (scorer schema mismatch)                                            | Scores based on real data, data coverage indicator                    |
+| 5. Report Generation               | Issues 2, 5 (stage formatting, fabrication)                                 | Estimates labeled, source footnotes, stage-appropriate format         |
+| 6. Provenance Audit                | Issue 9 (no audit trail)                                                    | Clickable source references, exportable audit chain                   |
+
+
+&nbsp;

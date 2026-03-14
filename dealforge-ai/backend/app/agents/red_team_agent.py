@@ -18,9 +18,10 @@ class RedTeamAgent(BaseAgent):
     """
 
     name = "red_team"
-    description = (
+    description: str = (
         "Adversarial agent that detects strategic silences and hidden deal risks"
     )
+    recommended_model: str = "Gemini 1.5 Pro (Adversarial Logic)"
 
     # Known deal-breaker patterns from historical M&A failures
     DEAL_BREAKER_PATTERNS = [

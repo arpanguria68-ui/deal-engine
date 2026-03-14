@@ -22,6 +22,10 @@ from app.agents.treasury_agent import (
 from app.agents.business_analyst import BusinessAnalystAgent
 from app.agents.ofas_supervisor import OFASSupervisorAgent
 from app.agents.compliance_qa_agent import ComplianceQAAgent
+from app.agents.ai_tech_diligence_agent import AITechDiligenceAgent
+from app.agents.esg_agent import ESGAgent
+from app.agents.integration_planner_agent import IntegrationPlannerAgent
+from app.agents.advanced_financial_modeler import AdvancedFinancialModelerAgent
 
 __all__ = [
     "BaseAgent",
@@ -50,4 +54,8 @@ __all__ = [
     "BusinessAnalystAgent",
     "OFASSupervisorAgent",
     "ComplianceQAAgent",
+    "AITechDiligenceAgent",
+    "ESGAgent",
+    "IntegrationPlannerAgent",
+    "AdvancedFinancialModelerAgent",
 ]

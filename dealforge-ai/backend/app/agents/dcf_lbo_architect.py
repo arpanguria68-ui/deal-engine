@@ -23,11 +23,13 @@ class DCFLBOArchitectAgent(BaseAgent):
     """
 
     name = "dcf_lbo_architect"
-    description = "Automates DCF models, LBO debt waterfalls, financial spreading, and returns analysis"
+    description: str = "Automates DCF models, LBO debt waterfalls, financial spreading, and returns analysis"
+    recommended_model: str = "Gemini 1.5 Pro (LBO/DCF Precision)"
 
     async def run(self, task: str, context: Optional[Dict] = None) -> AgentOutput:
         start = datetime.utcnow()
         context = context or {}
+        result = {}
 
         try:
             # Retrieve any relevant knowledge from RAG

@@ -38,7 +38,8 @@ class RiskAssessorAgent(BaseAgent):
     """
 
     name = "risk_assessor"
-    description = "Identifies and assesses business and transaction risks"
+    description: str = "Identifies and assesses business and transaction risks"
+    recommended_model: str = "Gemini 1.5 Pro (Strategic Risk)"
 
     async def run(self, task: str, context: Optional[Dict] = None) -> AgentOutput:
         """

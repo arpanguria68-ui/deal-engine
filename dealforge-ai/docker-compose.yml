@@ -16,34 +16,59 @@ services:
       dockerfile: Dockerfile
     container_name: dealforge-backend
     ports:
-      - "8000:8000"
+      - "8005:8000"
     environment:
       # Database
-      - DATABASE_URL=sqlite+aiosqlite:///./dealforge.db
+      - DATABASE_URL=sqlite+aiosqlite:///./data/dealforge.db
       # App config
+      - REDIS_URL=redis://redis:6379/0
       - DEBUG=${DEBUG:-false}
       - DEFAULT_LLM_PROVIDER=${DEFAULT_LLM_PROVIDER:-gemini}
       - PAGEINDEX_MODE=${PAGEINDEX_MODE:-local}
       - PYTHONUNBUFFERED=1
+      - DATA_DIR=/app/data
+      - REPORTS_DIR=/app/reports
       # API Keys from .env.docker
       - GEMINI_API_KEY=${GEMINI_API_KEY:-}
       - MISTRAL_API_KEY=${MISTRAL_API_KEY:-}
       - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+      # Financial Data API Keys
+      - FMP_API_KEY=${FMP_API_KEY:-}
+      - FINNHUB_API_KEY=${FINNHUB_API_KEY:-}
+      - ALPHA_VANTAGE_API_KEY=${ALPHA_VANTAGE_API_KEY:-}
+      - FINANCIAL_DATASETS_API_KEY=${FINANCIAL_DATASETS_API_KEY:-}
+      # SEC Filing Due Diligence (optional — paid sec-api.io tier)
+      - SEC_API_KEY=${SEC_API_KEY:-}
       # Model overrides
       - GEMINI_MODEL=${GEMINI_MODEL:-gemini-2.0-flash}
       - MISTRAL_MODEL=${MISTRAL_MODEL:-mistral-large-latest}
       - OPENAI_MODEL=${OPENAI_MODEL:-gpt-4o}
     volumes:
-      # Persist SQLite DB across restarts
+      # Persist SQLite DBs across restarts (tasks, quality, items)
       - dealforge-db:/app/data
+      # Persist generated reports
+      - dealforge-reports:/app/reports
       # Persist user settings
       - ./settings.json:/app/settings.json
+      # Mount external Knowledge Base folder
+      - ../Knowledge managerment:/app/knowledge_base
     healthcheck:
       test: [ "CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')" ]
       interval: 15s
       timeout: 5s
       retries: 3
       start_period: 20s
+    restart: unless-stopped
+    networks:
+      - dealforge-net
+
+  redis:
+    image: redis:7-alpine
+    container_name: dealforge-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - dealforge-redis-data:/data
     restart: unless-stopped
     networks:
       - dealforge-net
@@ -57,7 +82,7 @@ services:
     ports:
       - "3000:80"
     environment:
-      - VITE_API_BASE=http://localhost:8000
+      - VITE_API_BASE=http://localhost:8005
     depends_on:
       backend:
         condition: service_healthy
@@ -67,6 +92,8 @@ services:
 
 volumes:
   dealforge-db:
+  dealforge-reports:
+  dealforge-redis-data:
 
 
 networks:

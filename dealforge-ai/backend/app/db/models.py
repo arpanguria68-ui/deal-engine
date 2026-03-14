@@ -98,6 +98,13 @@ class Deal(Base):
     deal_score = Column(Float)
     risk_level = Column(String(20))
 
+    # Deal analysis configuration (QA Flow 1)
+    deal_stage = Column(
+        String(20), default="deep_dive"
+    )  # screening | deep_dive | ic_memo
+    buyer_thesis = Column(Text)  # Free-text investment thesis
+    deal_goal = Column(Text)  # What the analysis should determine
+
     owner_id = Column(String(36), ForeignKey("users.id"), nullable=True)
 
     created_at = Column(DateTime, default=datetime.utcnow)
@@ -108,6 +115,8 @@ class Deal(Base):
     documents = relationship("Document", back_populates="deal")
     agent_runs = relationship("AgentRun", back_populates="deal")
     workflow_states = relationship("WorkflowState", back_populates="deal")
+    provenance_records = relationship("ProvenanceRecord", back_populates="deal")
+    consistency_warnings = relationship("ConsistencyWarning", back_populates="deal")
 
 
 class Document(Base):
@@ -189,6 +198,10 @@ class DealScore(Base):
     total_score = Column(Float)
     confidence = Column(Float)
 
+    # Data quality metrics (QA Flow 4)
+    data_coverage = Column(Float)  # % of scorer inputs from real tool data
+    consistency_penalty = Column(Float)  # Score deduction from contradictions
+
     scoring_breakdown = Column(JSON)
     recommendations = Column(JSON)
 
@@ -215,3 +228,51 @@ class MemoryEntry(Base):
 
     created_at = Column(DateTime, default=datetime.utcnow)
     last_accessed = Column(DateTime)
+
+
+class ProvenanceRecord(Base):
+    """Audit trail for every tool call during agent execution (QA Flow 6)"""
+
+    __tablename__ = "provenance_records"
+
+    id = Column(String(36), primary_key=True, default=gen_uuid)
+    deal_id = Column(String(36), ForeignKey("deals.id"), nullable=False, index=True)
+
+    agent_name = Column(String(100), nullable=False)  # Which agent consumed this data
+    tool_name = Column(String(100), nullable=False)  # Which tool produced the data
+    tool_params = Column(JSON)  # Parameters sent to the tool
+    raw_response = Column(JSON)  # Exact response from the tool
+    timestamp = Column(DateTime, default=datetime.utcnow)  # When the tool was called
+    data_freshness = Column(String(50))  # e.g., "FY2024", "2025-03-08", "real-time"
+    execution_round = Column(Integer, default=1)  # Iteration of multi-round loop (1-3)
+    claim_refs = Column(JSON)  # List of claim strings referencing this record
+
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    deal = relationship("Deal", back_populates="provenance_records")
+
+
+class ConsistencyWarning(Base):
+    """Cross-agent contradiction detected by HaluGate cross-check (QA Flow 3)"""
+
+    __tablename__ = "consistency_warnings"
+
+    id = Column(String(36), primary_key=True, default=gen_uuid)
+    deal_id = Column(String(36), ForeignKey("deals.id"), nullable=False, index=True)
+
+    agent_a = Column(String(100), nullable=False)  # First agent in contradiction
+    claim_a = Column(Text, nullable=False)  # Claim from agent_a
+    agent_b = Column(String(100), nullable=False)  # Second agent
+    claim_b = Column(Text, nullable=False)  # Claim from agent_b
+    severity = Column(String(20), nullable=False)  # "minor" or "material"
+    explanation = Column(Text)  # Description of the contradiction
+
+    # User resolution (only user can resolve, never auto-resolved)
+    resolved = Column(Boolean, default=False)
+    resolved_by = Column(String(100))  # User identifier
+    resolved_at = Column(DateTime)
+    resolution_note = Column(Text)  # User explanation
+
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    deal = relationship("Deal", back_populates="consistency_warnings")

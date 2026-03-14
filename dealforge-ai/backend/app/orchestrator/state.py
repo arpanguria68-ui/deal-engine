@@ -169,6 +169,7 @@ class DealStage(str, Enum):
     VALUATION = "valuation"
     DUE_DILIGENCE = "due_diligence"
     DEBATE = "debate"
+    PEER_REVIEW = "peer_review"
     RED_TEAM = "red_team"
     SCORING = "scoring"
     DECISION = "decision"
@@ -193,6 +194,11 @@ class DealState(TypedDict, total=False):
     deal_id: str
     deal_name: str
 
+    # Deal analysis configuration (from QA Flows 1 & 2)
+    deal_stage: str  # "screening" | "deep_dive" | "ic_memo" — defaults to "deep_dive"
+    buyer_thesis: Optional[str]  # Free-text investment thesis
+    deal_goal: Optional[str]  # What the analysis should determine
+
     # Workflow state
     current_stage: DealStage
     stage_history: List[str]
@@ -203,6 +209,7 @@ class DealState(TypedDict, total=False):
     risk_output: Optional[Dict[str, Any]]
     market_output: Optional[Dict[str, Any]]
     debate_output: Optional[Dict[str, Any]]
+    peer_review_output: Optional[Dict[str, Any]]
     red_team_output: Optional[Dict[str, Any]]
     scoring_output: Optional[Dict[str, Any]]
     analyst_output: Optional[Dict[str, Any]]
@@ -210,6 +217,12 @@ class DealState(TypedDict, total=False):
     # MECE Issue Tree
     issue_tree: Optional[Dict[str, Any]]
     red_team_flags: Optional[List[Dict[str, Any]]]
+
+    # Cross-agent consistency (from QA Flow 3)
+    consistency_warnings: Optional[List[Dict[str, Any]]]
+
+    # Provenance summary (from QA Flow 6)
+    provenance_summary: Optional[Dict[str, int]]  # {tool_name: call_count}
 
     # Agent states
     agent_states: Dict[str, AgentState]
@@ -266,10 +279,15 @@ def create_initial_state(
 ) -> DealState:
     """Create initial state for a new deal workflow"""
     now = datetime.utcnow().isoformat()
+    ctx = context or {}
 
     return {
         "deal_id": deal_id,
         "deal_name": deal_name,
+        # Deal analysis configuration — populated from context
+        "deal_stage": ctx.get("deal_stage", "deep_dive"),
+        "buyer_thesis": ctx.get("buyer_thesis"),
+        "deal_goal": ctx.get("deal_goal"),
         "current_stage": DealStage.INIT,
         "stage_history": [DealStage.INIT],
         "financial_output": None,
@@ -277,13 +295,16 @@ def create_initial_state(
         "risk_output": None,
         "market_output": None,
         "debate_output": None,
+        "peer_review_output": None,
         "red_team_output": None,
         "scoring_output": None,
         "analyst_output": None,
         "issue_tree": None,
         "red_team_flags": [],
+        "consistency_warnings": [],
+        "provenance_summary": {},
         "agent_states": {},
-        "context": context or {},
+        "context": ctx,
         "documents": [],
         "final_recommendation": None,
         "final_score": None,
@@ -329,6 +350,7 @@ def get_agent_output(state: DealState, agent_type: str) -> Optional[Dict[str, An
         "risk_assessor": state.get("risk_output"),
         "market_researcher": state.get("market_output"),
         "debate_moderator": state.get("debate_output"),
+        "peer_reviewer": state.get("peer_review_output"),
         "red_team": state.get("red_team_output"),
         "scoring_agent": state.get("scoring_output"),
         "business_analyst": state.get("analyst_output"),

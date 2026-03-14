@@ -1,0 +1,17 @@
+sector: energy
+emphasis:
+  - agent: esg_agent
+    weight: 1.0
+  - agent: due_diligence_agent
+    weight: 0.9
+  - agent: dcf_lbo_architect
+    weight: 0.8
+custom_prompts:
+  financial_analyst: "Focus on commodity price sensitivity, CapEx intensity, and asset retirement obligations."
+  dcf_lbo_architect: "Utilize long-duration DCF modeling. Apply stochastic modeling (e.g., Ornstein-Uhlenbeck) for commodity price paths over the projection horizon."
+  esg_agent: "Extremely critical. Run deep Scope 1/2/3 emissions calculations and estimate exact financial impacts of future carbon taxes."
+checklists:
+  - "Environmental compliance and upcoming carbon taxation"
+  - "Commodity hedging structure and derivatives exposure"
+  - "Reserve life and depletion rates"
+  - "Stranded asset risk in transition to renewables"

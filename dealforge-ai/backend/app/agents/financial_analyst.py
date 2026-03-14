@@ -21,7 +21,8 @@ class FinancialAnalystAgent(BaseAgent):
     """
 
     name = "financial_analyst"
-    description = "Analyzes financial performance and creates valuation models"
+    description: str = "Analyzes financial performance and creates valuation models"
+    recommended_model: str = "Gemini 1.5 Pro (Large Context Finance)"
 
     async def run(self, task: str, context: Optional[Dict] = None) -> AgentOutput:
         """
@@ -47,9 +48,18 @@ class FinancialAnalystAgent(BaseAgent):
                 f"financial data revenue EBITDA cash flow {deal_id}", top_k=5
             )
 
+        # RL Loop: Inject historically successful patterns
+        from app.core.quality.agent_quality_store import AgentQualityStore
+
+        quality_store = AgentQualityStore()
+        await quality_store.initialize()
+        best_practices = await quality_store.get_historical_best_practices(
+            self.name, "deal_analysis"
+        )
+
         # Build analysis prompt
         prompt = self._build_analysis_prompt(task, context, memory_context)
-        system_prompt = self._build_system_prompt()
+        system_prompt = self._build_system_prompt(best_practices)
 
         # Generate analysis with tools
         response = await self.generate_with_tools(prompt, system_prompt)
@@ -143,9 +153,9 @@ Respond with structured JSON:
     "recommendation": "proceed" | "caution" | "reject"
 }}"""
 
-    def _build_system_prompt(self) -> str:
+    def _build_system_prompt(self, best_practices: List[str] = None) -> str:
         """Build system prompt for financial analysis"""
-        return f"""You are {self.name}, {self.description}.
+        prompt = f"""You are {self.name}, {self.description}.
 
 You are an expert financial analyst with deep experience in:
 - Financial modeling and valuation
@@ -154,13 +164,21 @@ You are an expert financial analyst with deep experience in:
 - Investment thesis development
 
 Guidelines:
-- Use specific numbers and cite sources
-- Show your calculation methodology
-- Consider multiple valuation approaches
-- Highlight both opportunities and risks
-- Be conservative in projections
-- Format all currency values consistently
+- **CRITICAL: NEVER hallucinate financial data. You must use your provided tools to fetch real data.**
+- If you need historical financials, use `fetch_financial_statements` or `financial_datasets`.
+- If you need real-time stock/market data, use `finnhub_data` or `alpha_vantage`.
+- Always show your calculation methodology.
+- Cite the explicit tool source for every number provided.
+- Format all currency values consistently.
 """
+        if best_practices:
+            prompt += (
+                "\n\nHistorical Best Practices (Learn from past high-scoring deals):\n"
+            )
+            for bp in best_practices:
+                prompt += f"- {bp}\n"
+
+        return prompt
 
     def _parse_analysis_output(self, content: str) -> Dict[str, Any]:
         """Parse analysis output from LLM response"""
@@ -207,7 +225,12 @@ Guidelines:
 
 Provide detailed calculation steps and final valuation."""
 
-        response = await self.llm.generate(prompt, self._build_system_prompt())
+        # valuations should be reproducible; force low temperature
+        response = await self.llm.generate(
+            prompt,
+            self._build_system_prompt(),
+            temperature=0.0,
+        )
 
         return {
             "method": method,
@@ -347,6 +370,17 @@ class ValuationAgent(BaseAgent):
             "comparable_companies": 0.35,
             "precedent_transactions": 0.25,
         }
+        valid_values = [v["value"] for v in valuations.values() if v.get("value")]
+        if not valid_values:
+            execution_time = (datetime.now() - start_time).total_seconds() * 1000
+            return AgentOutput(
+                success=False,
+                data={"valuations": valuations},
+                reasoning="All valuation methods returned insufficient data",
+                confidence=0.0,
+                execution_time_ms=execution_time,
+            )
+
         weighted_value = sum(
             valuations[m]["value"] * weights[m]
             for m in methods
@@ -361,12 +395,8 @@ class ValuationAgent(BaseAgent):
                 "valuations": valuations,
                 "weighted_estimate": weighted_value,
                 "valuation_range": {
-                    "low": min(
-                        v["value"] for v in valuations.values() if v.get("value")
-                    ),
-                    "high": max(
-                        v["value"] for v in valuations.values() if v.get("value")
-                    ),
+                    "low": min(valid_values),
+                    "high": max(valid_values),
                 },
             },
             reasoning=f"Weighted valuation using {', '.join(methods)}",
@@ -377,21 +407,20 @@ class ValuationAgent(BaseAgent):
     async def _run_valuation_method(
         self, method: str, financial_data: Dict, market_data: Dict
     ) -> Dict[str, Any]:
-        """Run specific valuation method"""
-        # This would integrate with actual calculation tools
-        # For now, return structured placeholder
-
         if method == "dcf":
+            cash_flows = financial_data.get("projected_cash_flows")
+            wacc = financial_data.get("wacc")
+            if not cash_flows or not wacc:
+                return {"method": method, "value": None, "note": "Insufficient data"}
+
             # Use financial calculator tool
             result = await self.tools.execute(
                 "financial_calculator",
                 {
                     "calculation_type": "dcf",
                     "inputs": {
-                        "cash_flows": financial_data.get(
-                            "projected_cash_flows", [1000000, 1200000, 1500000]
-                        ),
-                        "discount_rate": financial_data.get("wacc", 0.12),
+                        "cash_flows": cash_flows,
+                        "discount_rate": wacc,
                         "terminal_growth": 0.025,
                     },
                 },
@@ -401,11 +430,13 @@ class ValuationAgent(BaseAgent):
                 return {"method": method, "value": result.data.get("dcf_value", 0)}
 
         elif method == "comparable_companies":
-            revenue = financial_data.get("revenue", 10000000)
-            multiple = market_data.get("ev_revenue_median", 5)
+            revenue = financial_data.get("revenue")
+            multiple = market_data.get("ev_revenue_median")
+            if not revenue or not multiple:
+                return {"method": method, "value": None, "note": "Insufficient data"}
             return {"method": method, "value": revenue * multiple}
 
-        return {"method": method, "value": None}
+        return {"method": method, "value": None, "note": "Unsupported method"}
 
     @staticmethod
     def calculate_comps_valuation(
