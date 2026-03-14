@@ -26,12 +26,8 @@ ENV RUNNING_IN_DOCKER=1
 ENV DATABASE_URL=sqlite+aiosqlite:///./data/dealforge.db
 ENV DATA_DIR=data
 ENV REPORTS_DIR=reports
-ENV DEBUG=true
-ENV DEFAULT_LLM_PROVIDER=gemini
-ENV PAGEINDEX_MODE=local
-
-# Expose port
+# Expose port (Cloud Run uses $PORT, but we'll document 8000 as default)
 EXPOSE 8000
 
-# Run the application (no --reload to avoid subprocess issues)
-CMD ["python", "-m", "uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+# Run the application (use $PORT for Cloud Run compatibility, default to 8000)
+CMD ["sh", "-c", "python -m uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000}"]
