@@ -49,9 +49,9 @@ services:
       # Persist generated reports
       - dealforge-reports:/app/reports
       # Persist user settings
-      - ./settings.json:/app/settings.json
+      - ./backend/settings.json:/app/settings.json
       # Mount external Knowledge Base folder
-      - ../Knowledge managerment:/app/knowledge_base
+      - "./Knowledge managerment:/app/knowledge_base"
     healthcheck:
       test: [ "CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')" ]
       interval: 15s
@@ -76,7 +76,7 @@ services:
   # ═══════════════════════════════ FRONTEND ══════════════════════════════
   frontend:
     build:
-      context: ../app
+      context: ./frontend
       dockerfile: Dockerfile.docker
     container_name: dealforge-frontend
     ports:
