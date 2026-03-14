@@ -1,20 +1,18 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
-import { Card } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
-import { Badge } from '@/components/ui/badge';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import {
     Send, Paperclip, User, Loader2, Sparkles,
     TrendingUp, AlertTriangle, FileText, Scale, Brain,
     Download, ChevronRight, HelpCircle, Cpu, Cloud,
     ListChecks, CheckCircle2, Copy, Check, RotateCcw, Edit2,
-    Zap, Sliders, Star, Globe, BookOpen, Database, ChevronDown
+    Zap, Sliders, Star, Globe, BookOpen, Database, ChevronDown, ChevronUp
 } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { useDealForgeStore } from '@/lib/dealforge-store';
 
-const API_BASE = 'http://localhost:8000';
+const API_BASE = (import.meta as any).env?.VITE_API_BASE || 'http://localhost:8005';
 
 // ─── Types ───
 
@@ -80,25 +78,35 @@ const SPEED_AGENTS = new Set(['financial_analyst', 'risk_assessor', 'market_rese
 
 // ─── Helpers ───
 
-function generateFollowUps(dealText: string, _agentResults: string[]): string[] {
+function generateContextAwareFollowUps(completedResults: any[], taskList: any[], companyName: string): string[] {
     const suggestions: string[] = [];
-    const lower = dealText.toLowerCase();
-    if (lower.includes('acquisition') || lower.includes('acquire')) {
-        suggestions.push('What are the key synergies in this acquisition?');
-        suggestions.push('Run a sensitivity analysis on the DCF valuation');
-        suggestions.push('What regulatory hurdles could block this deal?');
+
+    for (let i = 0; i < completedResults.length; i++) {
+        const r = completedResults[i];
+        const agent = taskList[i]?.assigned_agent || '';
+        const reasoning = (r?.reasoning || '').toLowerCase();
+        const confidence = r?.confidence ?? 1;
+
+        if (confidence < 0.5) {
+            const label = agent.replace(/_/g, ' ').replace(/\b\w/g, (c: string) => c.toUpperCase());
+            suggestions.push(`Re-run ${label} with additional context for ${companyName}`);
+        }
+        if (agent.includes('risk') && (reasoning.includes('regulatory') || reasoning.includes('antitrust'))) {
+            suggestions.push(`Deep dive into regulatory approval timeline for ${companyName}`);
+        }
+        if (agent.includes('risk') && reasoning.includes('integration')) {
+            suggestions.push('What are the post-merger integration risks and timeline?');
+        }
+        if (agent.includes('valuation') || agent.includes('dcf')) {
+            suggestions.push('Run sensitivity analysis on key DCF assumptions');
+        }
+        if (agent.includes('financial') && reasoning.includes('synerg')) {
+            suggestions.push(`Quantify projected cost and revenue synergies for ${companyName}`);
+        }
     }
-    if (lower.includes('merger')) {
-        suggestions.push('What are the integration risks post-merger?');
-        suggestions.push('Compare management team strengths of both companies');
-    }
-    if (lower.includes('saas') || lower.includes('software')) {
-        suggestions.push('Analyze the Net Revenue Retention and churn metrics');
-        suggestions.push('How does the CAC payback period compare to industry benchmarks?');
-    }
-    suggestions.push('What are the top 3 deal-breaker risks?');
+
     suggestions.push('Generate a one-page investment memo');
-    suggestions.push('What comparable transactions support this valuation?');
+    suggestions.push(`What comparable transactions support the ${companyName} valuation?`);
     return [...new Set(suggestions)].slice(0, 4);
 }
 
@@ -119,15 +127,90 @@ function extractCompanyName(text: string): string {
     return match ? match[1].trim() : text.substring(0, 40);
 }
 
-function formatAgentResult(agentLabel: string, result: Record<string, unknown>): string {
+function formatAgentSummaryLine(agentLabel: string, result: Record<string, unknown>): string {
     const confidence = typeof result.confidence === 'number' ? `${Math.round((result.confidence as number) * 100)}%` : 'N/A';
-    const reasoning = typeof result.reasoning === 'string' ? (result.reasoning as string) : '';
     const time = typeof result.execution_time_ms === 'number' ? `${Math.round(result.execution_time_ms as number)}ms` : '';
-    let output = `### ${agentLabel}\n\n`;
-    if (reasoning) output += `${reasoning}\n\n`;
-    output += `**Confidence:** ${confidence}`;
-    if (time) output += ` · **Time:** ${time}`;
+    return `**${agentLabel}** — Confidence: ${confidence}${time ? ` · ${time}` : ''}`;
+}
+
+function formatAgentDetailBody(result: Record<string, unknown>): string {
+    let output = typeof result.reasoning === 'string' ? (result.reasoning as string) : 'No detailed reasoning available.';
+
+    if (result.data && typeof result.data === 'object') {
+        const data = result.data as Record<string, unknown>;
+        const longFormKeys = ['memo', 'report', 'markdown', 'content', 'executive_summary'];
+        
+        for (const key of longFormKeys) {
+            if (typeof data[key] === 'string' && (data[key] as string).length > 50) {
+                const label = key.split('_').map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ');
+                output += `\n\n---\n\n### 📄 Generated ${label}\n\n${data[key]}`;
+            }
+        }
+    }
     return output;
+}
+
+function buildSynthesisMessage(completedResults: any[], taskList: any[], companyName: string): string {
+    let md = `## 📊 Executive Summary — ${companyName}\n\n`;
+    const metrics: { metric: string; value: string; source: string }[] = [];
+    let recommendation = '';
+    const risks: string[] = [];
+    let dealScore = 0;
+    let overallConfidence = 0;
+    let agentCount = 0;
+
+    for (let i = 0; i < completedResults.length; i++) {
+        const r = completedResults[i];
+        const agent = taskList[i]?.assigned_agent || '';
+        const agentLabel = agent.replace(/_/g, ' ').replace(/\b\w/g, (c: string) => c.toUpperCase());
+        const reasoning = (r?.reasoning || '').substring(0, 500);
+        const data = r?.data || {};
+        const confidence = r?.confidence ?? 0.5;
+        overallConfidence += confidence;
+        agentCount++;
+
+        if (agent.includes('financial')) {
+            if (data.revenue) metrics.push({ metric: 'Revenue', value: String(data.revenue), source: agentLabel });
+            if (data.ebitda) metrics.push({ metric: 'EBITDA', value: String(data.ebitda), source: agentLabel });
+            if (data.net_income) metrics.push({ metric: 'Net Income', value: String(data.net_income), source: agentLabel });
+        }
+        if (agent.includes('valuation') || agent.includes('dcf')) {
+            if (data.valuation_range) metrics.push({ metric: 'Valuation Range', value: String(data.valuation_range), source: agentLabel });
+            if (data.implied_multiple) metrics.push({ metric: 'Implied Multiple', value: String(data.implied_multiple), source: agentLabel });
+        }
+        if (agent.includes('risk')) {
+            const riskItems = Array.isArray(data.key_risks) ? data.key_risks : [];
+            risks.push(...riskItems.map((ri: any) => typeof ri === 'string' ? ri : ri?.description || '').filter(Boolean).slice(0, 3));
+            if (!risks.length && reasoning) {
+                risks.push(...reasoning.split(/[.!]/).filter((s: string) => s.toLowerCase().includes('risk')).slice(0, 2).map((s: string) => s.trim()).filter(Boolean));
+            }
+        }
+        if (agent.includes('scoring') || agent.includes('complex_reasoning')) {
+            if (data.recommendation) recommendation = String(data.recommendation);
+            if (data.deal_score) dealScore = Number(data.deal_score);
+        }
+    }
+
+    const avgConf = agentCount > 0 ? Math.round((overallConfidence / agentCount) * 100) : 0;
+    if (!dealScore && agentCount > 0) dealScore = Math.round((overallConfidence / agentCount) * 100);
+    if (recommendation) md += `> ${recommendation.substring(0, 300)}\n\n`;
+
+    if (metrics.length > 0) {
+        md += `### Key Metrics\n\n| Metric | Value | Source |\n|--------|-------|--------|\n`;
+        metrics.forEach(m => { md += `| ${m.metric} | ${m.value} | ${m.source} |\n`; });
+        md += `\n`;
+    }
+
+    if (risks.length > 0) {
+        md += `### ⚠️ Key Risk Factors\n\n`;
+        risks.slice(0, 5).forEach(r => { md += `- ${r}\n`; });
+        md += `\n`;
+    }
+
+    const scoreEmoji = dealScore >= 75 ? '🟢' : dealScore >= 50 ? '🟡' : '🔴';
+    md += `---\n\n**${scoreEmoji} Deal Score: ${dealScore}/100** · Overall Confidence: ${avgConf}% · ${agentCount} Agents Completed\n\n`;
+    md += `*Click on any agent above to expand their full reasoning and data.*`;
+    return md;
 }
 
 // ─── Animated Dots Component ───
@@ -246,6 +329,11 @@ export function ChatWindow() {
     const store = useDealForgeStore();
     const activeConv = store.getActiveConversation();
 
+    // Hydrate from Redis on mount (primary persistence)
+    useEffect(() => {
+        store.loadFromBackend();
+    }, []);
+
     useEffect(() => {
         if (!activeConv) {
             const convId = store.createConversation();
@@ -267,6 +355,10 @@ export function ChatWindow() {
     const [input, setInput] = useState('');
     const [phase, setPhase] = useState<Phase>('idle');
     const [activeDealId, setActiveDealId] = useState<string | null>(activeConv?.dealId || null);
+    const [dealCompleted, setDealCompleted] = useState(false);
+    const completedResultsRef = useRef<any[]>([]);
+    const taskListRef = useRef<any[]>([]);
+    const [collapsedAgents, setCollapsedAgents] = useState<Record<string, boolean>>({});
     const [uploadedFiles, setUploadedFiles] = useState<File[]>([]);
     const [followUps, setFollowUps] = useState<string[]>([]);
     const [copiedId, setCopiedId] = useState<string | null>(null);
@@ -312,6 +404,7 @@ export function ChatWindow() {
             content: updates.content, status: updates.status,
             agentName: updates.agentName, provider: updates.provider,
             followUps: updates.followUps, missingData: updates.missingData,
+            metadata: updates.metadata,
         });
     }
 
@@ -341,6 +434,7 @@ export function ChatWindow() {
 
         setInput('');
         setFollowUps([]);
+        setCollapsedAgents({});
         setPhase('brainstorming');
 
         const lastAgentMsg = messages.slice().reverse().find(m => m.role === 'agent' || m.role === 'assistant');
@@ -366,13 +460,40 @@ export function ChatWindow() {
             let dealId = activeDealId;
             let currentPrompt = userText;
             let userAnswers: any[] = [];
+            let currentRound = 0;
 
             if (isAnsweringQuestions) {
                 updateMessage(lastAgentMsg!.id, { metadata: { ...lastAgentMsg!.metadata, pending_clarification: false } });
                 dealId = lastAgentMsg!.metadata!.deal_id as string;
                 currentPrompt = lastAgentMsg!.metadata!.original_prompt as string;
+                currentRound = Number(lastAgentMsg!.metadata!.clarification_round || 0) + 1;
                 userAnswers = [{ question: "User Response", answer: userText }];
                 setActiveDealId(dealId);
+
+                // Tier 2+3: store Q&A pair in memory for self-learning
+                const priorQuestions = lastAgentMsg!.metadata!.questions as any[] || [];
+                const detectedDealType = userText.toLowerCase().includes('lbo') ? 'lbo'
+                    : userText.toLowerCase().includes('ipo') ? 'ipo'
+                        : (currentPrompt || '').toLowerCase().includes('acqui') ? 'm_a' : 'valuation';
+                fetch(`${API_BASE}/api/v1/chat/clarify/feedback`, {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        deal_type: detectedDealType,
+                        questions: priorQuestions,
+                        user_answer: userText,
+                        task_score: 0.75, // default; updated later when agents complete
+                    }),
+                }).catch(() => { }); // fire-and-forget
+            } else if (dealCompleted && activeDealId) {
+                // ─── Follow-up on completed deal (Context Persistence) ───
+                dealId = activeDealId;
+                setDealCompleted(false);
+
+                addMessage({
+                    role: 'agent', agentName: 'Scrum Master',
+                    content: `🔄 **Follow-up on existing deal** — Reusing context from ${completedResultsRef.current.length} prior agent results.`,
+                    status: 'done',
+                });
             } else {
                 // Create deal
                 const createRes = await fetch(`${API_BASE}/api/v1/deals`, {
@@ -388,6 +509,8 @@ export function ChatWindow() {
                 const deal = await createRes.json();
                 dealId = deal.id;
                 setActiveDealId(dealId);
+                completedResultsRef.current = [];
+                taskListRef.current = [];
 
                 if (uploadedFiles.length > 0) await uploadFiles(dealId!);
 
@@ -400,18 +523,31 @@ export function ChatWindow() {
 
                 const clarifyRes = await fetch(`${API_BASE}/api/v1/chat/clarify`, {
                     method: 'POST', headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ prompt: userText, deal_id: dealId, company_name: extractCompanyName(userText) }),
+                    body: JSON.stringify({
+                        prompt: userText,
+                        deal_id: dealId,
+                        company_name: extractCompanyName(userText),
+                        clarification_round: currentRound
+                    }),
                 });
 
                 if (clarifyRes.ok) {
                     const clarifyData = await clarifyRes.json();
                     if (clarifyData.clarifying_questions?.length > 0) {
-                        const questionList = clarifyData.clarifying_questions.map((q: any, i: number) =>
+                        const questions = clarifyData.clarifying_questions;
+                        const nQ = questions.length;
+                        const questionList = questions.map((q: any, i: number) =>
                             `**Q${i + 1}:** ${q.question}\n*Reasoning: ${q.reasoning}*`).join('\n\n');
                         updateMessage(thinkingId, {
-                            content: `🧠 **Scrum Master — Clarification Needed**\n\n${questionList}\n\n*(Please reply to proceed)*`,
+                            content: `🧠 **Scrum Master — Clarification Needed** *(Round 1 of 1 · ${nQ} question${nQ > 1 ? 's' : ''})*\n\n${questionList}\n\n---\n*Reply to proceed, or type \`skip\` to use smart defaults.*`,
                             status: 'done',
-                            metadata: { pending_clarification: true, original_prompt: userText, deal_id: dealId, questions: clarifyData.clarifying_questions }
+                            metadata: {
+                                pending_clarification: true,
+                                original_prompt: userText,
+                                deal_id: dealId,
+                                clarification_round: currentRound,
+                                questions: clarifyData.clarifying_questions
+                            }
                         });
                         setPhase('idle');
                         return;
@@ -454,7 +590,7 @@ export function ChatWindow() {
                     if (taskList.length > 3) taskList = taskList.slice(0, 3);
                 } else if (focusMode === 'balanced') {
                     taskList = taskList.filter(t => t.priority === 'critical' || t.priority === 'high');
-                    if (taskList.length > 6) taskList = taskList.slice(0, 6);
+                    if (taskList.length > 12) taskList = taskList.slice(0, 12);
                 }
                 // Quality: keep all
 
@@ -482,8 +618,15 @@ export function ChatWindow() {
             // ─── Execute Tasks ───
             setPhase('executing');
             const agentResults: string[] = [];
+            const completedResults: any[] = [];
             let completedCount = 0;
             setExecutingProgress({ done: 0, total: taskList.length });
+
+            // Mark the deal as running on the Dashboard
+            fetch(`${API_BASE}/api/v1/deals/${dealId}`, {
+                method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ status: 'running', current_stage: 'analysis' }),
+            }).catch(() => { });
 
             const progressId = addMessage({
                 role: 'system', agentName: 'Progress',
@@ -496,6 +639,17 @@ export function ChatWindow() {
                     role: 'agent', agentName: agentLabel,
                     content: `⏳ **${task.title}** — Analyzing...`, status: 'thinking',
                 });
+                // Add slight delay to mitigate LLM 429 rate limit errors (Task 5)
+                await new Promise(resolve => setTimeout(resolve, 500));
+
+                // Accumulate prior agent outputs for DataCurator/ComplexReasoning (Task 4)
+                const priorOutputs: Record<string, any> = {};
+                for (let i = 0; i < completedResults.length; i++) {
+                    const t = taskList[i];
+                    if (t && t.assigned_agent && completedResults[i]?.data) {
+                        priorOutputs[t.assigned_agent] = completedResults[i].data;
+                    }
+                }
 
                 try {
                     const taskRes = await fetch(`${API_BASE}/api/v1/chat/execute-task`, {
@@ -504,18 +658,40 @@ export function ChatWindow() {
                             agent_type: task.assigned_agent, task: task.description,
                             deal_id: dealId, task_id: task.id || `task-${completedCount}`,
                             title: task.title, sources: activeSources,
+                            company_name: extractCompanyName(userText), // Added company_name propagation
+                            agent_outputs: priorOutputs, // Injected prior contextual data
                         }),
                     });
 
                     if (taskRes.ok) {
                         const result = await taskRes.json();
-                        const formatted = formatAgentResult(agentLabel, result);
-                        agentResults.push(formatted);
+                        result._agent_type = task.assigned_agent;
+                        const summaryLine = formatAgentSummaryLine(agentLabel, result);
+                        const detailBody = formatAgentDetailBody(result);
+                        agentResults.push(summaryLine);
+                        completedResults.push(result);
                         completedCount++;
+
+                        setCollapsedAgents(prev => ({ ...prev, [taskMsgId]: true }));
                         updateMessage(taskMsgId, {
-                            content: `✅ **${task.title}**\n\n${formatted}`, status: 'done',
-                            provider: result.provider || 'unknown', metadata: result.data,
+                            content: `${summaryLine}\n\n---\n\n${detailBody}`, status: 'done',
+                            provider: result.provider || 'unknown',
+                            metadata: { ...result.data, _agentSummary: summaryLine, _agentDetail: detailBody },
                         });
+
+                        // Forward real agent data to activity log
+                        fetch(`${API_BASE}/api/v1/agent-activity`, {
+                            method: 'POST', headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({
+                                agent_type: task.assigned_agent, deal_id: dealId,
+                                summary: `Completed: ${task.title}`, 
+                                provider: result.provider || 'auto', 
+                                confidence: result.confidence ?? 0.5,
+                                reasoning: (result.reasoning || '').slice(0, 3000),
+                                data: result.data || {},
+                            }),
+                        }).catch(() => { });
+
                     } else {
                         completedCount++;
                         updateMessage(taskMsgId, { content: `⚠️ **${task.title}** — Agent error. Check Settings.`, status: 'error' });
@@ -529,24 +705,39 @@ export function ChatWindow() {
                 updateMessage(progressId, {
                     content: `📊 **Progress:** ${completedCount}/${taskList.length} agents complete ${completedCount === taskList.length ? '✅' : ''}`,
                 });
-
-                fetch(`${API_BASE}/api/v1/agent-activity`, {
-                    method: 'POST', headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        agent_type: task.assigned_agent, deal_id: dealId,
-                        summary: `Completed: ${task.title}`, provider: 'auto', confidence: 0.8,
-                    }),
-                }).catch(() => { });
             }
 
-            // ─── Synthesis ───
+            // ─── Mark deal as completed on Dashboard ───
+            const scores = completedResults.map((r: any) => r.confidence ?? 0.5);
+            const avgScore = scores.length > 0 ? (scores.reduce((a: number, b: number) => a + b, 0) / scores.length) : 0.8;
+            fetch(`${API_BASE}/api/v1/deals/${dealId}`, {
+                method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    status: 'completed',
+                    current_stage: 'completed',
+                    final_score: parseFloat(avgScore.toFixed(4)),
+                    final_recommendation: `${completedCount}/${taskList.length} tasks completed`,
+                }),
+            }).catch(() => { });
+
+            // ─── Synthesis (Perplexity-style) ───
             setPhase('synthesizing');
+            const companyName = extractCompanyName(userText);
+            const synthesisContent = buildSynthesisMessage(completedResults, taskList, companyName);
             addMessage({
-                role: 'agent', agentName: 'Scrum Master',
-                content: `🏁 **Analysis Complete**\n\n✅ **${completedCount}/${taskList.length}** tasks completed across **${new Set(taskList.map(t => t.assigned_agent)).size}** specialist agents.\n\nAll findings are presented above. Review each agent's analysis for detailed insights.`,
+                role: 'agent', agentName: 'DealForge Summary',
+                content: synthesisContent,
+                metadata: { _isSynthesis: true },
             });
 
-            const suggestions = generateFollowUps(userText, agentResults);
+            // Store completed results for follow-up context persistence
+            completedResultsRef.current = completedResults.map((r, i) => ({
+                ...r, agent: taskList[i]?.assigned_agent,
+            }));
+            taskListRef.current = taskList;
+            setDealCompleted(true);
+
+            const suggestions = generateContextAwareFollowUps(completedResults, taskList, companyName);
             setFollowUps(suggestions);
 
         } catch (err) {
@@ -686,6 +877,26 @@ export function ChatWindow() {
                                 <Button size="sm" onClick={() => handleEditSubmit(msg)} className="bg-cyan-500/20 text-cyan-400 hover:bg-cyan-500/30">Save</Button>
                             </div>
                         </div>
+                    ) : msg.metadata?._agentSummary ? (
+                        /* ─── Collapsible Agent Panel ─── */
+                        <div className={`rounded-2xl text-sm leading-relaxed transition-all duration-300
+                            bg-white/[0.04] backdrop-blur-sm rounded-bl-md border border-white/[0.06] text-white/80 hover:border-white/10 overflow-hidden`}>
+                            <button
+                                onClick={() => setCollapsedAgents(prev => ({ ...prev, [msg.id]: !prev[msg.id] }))}
+                                className="w-full flex items-center justify-between px-4 py-3 hover:bg-white/[0.03] transition-colors cursor-pointer"
+                            >
+                                <span>{renderMarkdown(String(msg.metadata._agentSummary))}</span>
+                                {collapsedAgents[msg.id]
+                                    ? <ChevronDown className="h-4 w-4 text-white/40 flex-shrink-0" />
+                                    : <ChevronUp className="h-4 w-4 text-white/40 flex-shrink-0" />
+                                }
+                            </button>
+                            {!collapsedAgents[msg.id] && (
+                                <div className="px-4 pb-3 border-t border-white/[0.06] pt-3 animate-in fade-in slide-in-from-top-1 duration-200">
+                                    {renderMarkdown(String(msg.metadata._agentDetail || ''))}
+                                </div>
+                            )}
+                        </div>
                     ) : (
                         <div className={`rounded-2xl px-4 py-3 text-sm leading-relaxed whitespace-pre-wrap transition-all duration-300
                             ${isUser
@@ -705,6 +916,16 @@ export function ChatWindow() {
                             <button className="p-1 rounded-md text-white/30 hover:text-white/60 hover:bg-white/5 transition-colors" onClick={() => handleCopy(msg.content, msg.id)} title="Copy">
                                 {copiedId === msg.id ? <Check className="h-3 w-3 text-emerald-400" /> : <Copy className="h-3 w-3" />}
                             </button>
+                            {Boolean(msg.metadata?.excel_model_base64) && (
+                                <a
+                                    href={`data:application/vnd.openxmlformats-officedocument.spreadsheetml.sheet;base64,${msg.metadata?.excel_model_base64 as string}`}
+                                    download={`Financial_Model_${(msg.metadata?.deal_id as string) || 'export'}.xlsx`}
+                                    className="p-1 text-emerald-400 hover:text-emerald-300 hover:bg-emerald-500/10 rounded-md transition-colors"
+                                    title="Download Excel Model"
+                                >
+                                    <Download className="h-3 w-3" />
+                                </a>
+                            )}
                             {isUser && !isProcessing && (
                                 <>
                                     <button className="p-1 rounded-md text-white/30 hover:text-white/60 hover:bg-white/5 transition-colors" onClick={() => { setEditingMsgId(msg.id); setEditValue(msg.content); }} title="Edit">

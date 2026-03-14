@@ -21,7 +21,7 @@ function App() {
   async function checkSystemStatus() {
     setSysStatus('checking');
     try {
-      const res = await fetch('http://localhost:8000/health', { signal: AbortSignal.timeout(3000) });
+      const res = await fetch('http://localhost:8005/health', { signal: AbortSignal.timeout(3000) });
       setSysStatus(res.ok ? 'ok' : 'error');
     } catch {
       setSysStatus('error');

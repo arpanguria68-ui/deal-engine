@@ -10,7 +10,7 @@ import {
     Activity, Server
 } from 'lucide-react';
 
-const API_BASE = 'http://localhost:8000';
+const API_BASE = 'http://localhost:8005';
 
 interface RAGStats {
     total_documents: number;
@@ -125,6 +125,9 @@ export function RAGDashboard() {
     const [testResult, setTestResult] = useState<any>(null);
     const [testing, setTesting] = useState(false);
     const [ragMode, setRagMode] = useState<string>('local');
+    const [directoryPath, setDirectoryPath] = useState('');
+    const [syncing, setSyncing] = useState(false);
+    const [syncMessage, setSyncMessage] = useState<string | null>(null);
 
     const fetchAll = useCallback(async () => {
         setLoading(true);
@@ -175,6 +178,33 @@ export function RAGDashboard() {
     function handleDeleteDoc(docId: string) {
         // For now, just refresh (delete endpoint can be added later)
         setDocuments(prev => prev.filter(d => d.doc_id !== docId));
+    }
+
+    async function handleDirectorySync() {
+        if (!directoryPath.trim()) return;
+        setSyncing(true);
+        setSyncMessage(null);
+        setError(null);
+        try {
+            const res = await fetch(`${API_BASE}/api/v1/documents/directory`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ directory_path: directoryPath }),
+            });
+            if (res.ok) {
+                const data = await res.json();
+                setSyncMessage(data.message || 'Background indexing started successfully.');
+                setDirectoryPath('');
+                // Start polling/refreshing
+                fetchAll();
+            } else {
+                setError(`HTTP ${res.status}: ${res.statusText}`);
+            }
+        } catch (err) {
+            setError(err instanceof Error ? err.message : 'Directory sync failed');
+        }
+        setSyncing(false);
+        setTimeout(() => setSyncMessage(null), 5000);
     }
 
     const pageindexRoute = routing?.health?.pageindex;
@@ -318,6 +348,42 @@ export function RAGDashboard() {
                 </div>
             </Card>
 
+            {/* ─── Local Directory Sync ─── */}
+            <Card className="p-4 flex flex-col gap-4 border-border bg-card shadow-sm">
+                <div className="flex justify-between items-center">
+                    <div className="flex items-center gap-2">
+                        <FolderTree className="h-5 w-5 text-indigo-500" />
+                        <div>
+                            <h3 className="text-sm font-semibold text-foreground">Local Directory Knowledge Sync</h3>
+                            <p className="text-xs text-muted-foreground mt-0.5">Bulk ingest an entire folder of documents (.pdf, .md, .txt, .docx) from your local machine</p>
+                        </div>
+                    </div>
+                </div>
+                <div className="flex gap-3">
+                    <input
+                        type="text"
+                        value={directoryPath}
+                        onChange={(e) => setDirectoryPath(e.target.value)}
+                        placeholder={"e.g. C:\\Users\\user\\financial_documents"}
+                        className="flex-1 bg-muted/30 border border-border rounded-lg px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground/50 focus:outline-none focus:border-indigo-500/30"
+                    />
+                    <Button
+                        onClick={handleDirectorySync}
+                        disabled={syncing || !directoryPath.trim()}
+                        className="bg-indigo-600 hover:bg-indigo-700 text-white shadow-sm"
+                    >
+                        {syncing ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <Upload className="h-4 w-4 mr-2" />}
+                        {syncing ? 'Starting...' : 'Start Indexing'}
+                    </Button>
+                </div>
+                {syncMessage && (
+                    <p className="text-xs text-emerald-500 font-medium flex items-center gap-1.5">
+                        <CheckCircle2 className="h-3.5 w-3.5" />
+                        {syncMessage}
+                    </p>
+                )}
+            </Card>
+
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
                 {/* ─── Indexed Documents ─── */}
                 <Card className="border-border bg-card shadow-sm flex flex-col">
@@ -327,6 +393,15 @@ export function RAGDashboard() {
                             <h3 className="text-sm font-semibold text-foreground">Indexed Documents</h3>
                             <Badge className="text-[10px] bg-muted text-muted-foreground border-border">{documents.length}</Badge>
                         </div>
+                        <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={fetchAll}
+                            disabled={loading}
+                            className="h-7 w-7 p-0 text-muted-foreground hover:text-foreground"
+                        >
+                            <RefreshCw className={`h-3.5 w-3.5 ${loading ? 'animate-spin' : ''}`} />
+                        </Button>
                     </div>
 
                     <ScrollArea className="flex-1 min-h-[200px] max-h-[400px]">

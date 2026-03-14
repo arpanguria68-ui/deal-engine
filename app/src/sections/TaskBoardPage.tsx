@@ -4,7 +4,7 @@ import {
     RefreshCw, ChevronDown, ChevronUp, GripVertical, Send, Loader2, ListTodo
 } from 'lucide-react';
 
-const API = 'http://localhost:8000';
+const API = 'http://localhost:8005';
 
 interface TodoItem {
     id: string;
