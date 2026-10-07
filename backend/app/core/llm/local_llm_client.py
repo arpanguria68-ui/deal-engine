@@ -50,6 +50,8 @@ class OllamaClient:
                 "temperature": kwargs.get("temperature", 0.7),
             },
         }
+        if kwargs.get("max_tokens"):
+            payload["options"]["num_predict"] = kwargs["max_tokens"]
 
         # Note: Ollama supports experimental tools, but we'll focus on text gen for now
         # or pass them if the model supports it.

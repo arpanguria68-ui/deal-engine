@@ -223,6 +223,11 @@ class SettingsService:
 
             get_settings.cache_clear()
 
+            # Pooled LLM clients hold the old keys/models — rebuild on next use
+            from app.core.llm import reset_llm_clients
+
+            reset_llm_clients()
+
             # Reset PageIndex and RAG singletons so they re-initialize with new routing/keys
             try:
                 import app.core.memory.pageindex_client as pic

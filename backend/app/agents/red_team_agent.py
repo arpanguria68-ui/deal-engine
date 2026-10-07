@@ -46,8 +46,12 @@ class RedTeamAgent(BaseAgent):
         start_time = datetime.now()
         self.logger.info("Red Team sweep initiated", task=task)
 
-        issue_tree = context.get("issue_tree", {}) if context else {}
-        agent_outputs = context.get("agent_outputs", {}) if context else {}
+        issue_tree = (context.get("issue_tree") if context else None) or {}
+        # An agent that failed upstream leaves its output as None
+        agent_outputs = {
+            name: output or {}
+            for name, output in ((context.get("agent_outputs") if context else None) or {}).items()
+        }
 
         flags: List[Dict[str, Any]] = []
 

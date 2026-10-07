@@ -247,7 +247,7 @@ Guidelines:
 
 Provide detailed assessment with probability, impact, and mitigation strategies."""
 
-        response = await self.llm.generate(prompt, self._build_system_prompt())
+        response = await self.llm_generate(prompt, self._build_system_prompt())
 
         return {"risk_type": risk_type, "assessment": response["content"]}
 

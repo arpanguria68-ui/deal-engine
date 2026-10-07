@@ -309,7 +309,7 @@ class DebateModeratorAgent(BaseAgent):
         prompt = self._build_debate_prompt(debate_topic, agent_outputs)
         system_prompt = self._build_system_prompt()
 
-        response = await self.llm.generate(prompt, system_prompt)
+        response = await self.llm_generate(prompt, system_prompt)
 
         try:
             synthesis_data = self._parse_synthesis_output(response["content"])

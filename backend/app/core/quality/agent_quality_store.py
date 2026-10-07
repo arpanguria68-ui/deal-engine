@@ -14,6 +14,10 @@ class AgentQualityStore:
     to enable Reinforcement Learning (RL) based self-improvement.
     """
 
+    # db paths whose schema already exists in this process; agents construct
+    # a store and call initialize() on every run.
+    _initialized_paths: set = set()
+
     def __init__(self, db_path: str = None):
         if not db_path:
             settings = get_settings()
@@ -24,7 +28,9 @@ class AgentQualityStore:
         self.logger = structlog.get_logger()
 
     async def initialize(self):
-        """Initialize the SQLite database schema"""
+        """Initialize the SQLite database schema (once per db path per process)"""
+        if self.db_path in AgentQualityStore._initialized_paths:
+            return
         os.makedirs(os.path.dirname(self.db_path), exist_ok=True)
 
         async with aiosqlite.connect(self.db_path) as db:
@@ -59,6 +65,7 @@ class AgentQualityStore:
                 """
             )
             await db.commit()
+        AgentQualityStore._initialized_paths.add(self.db_path)
 
     async def log_action(
         self,

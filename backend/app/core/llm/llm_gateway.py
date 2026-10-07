@@ -15,12 +15,14 @@ import random
 import hashlib
 import json
 import asyncio
-from collections import deque
+from collections import deque, OrderedDict
 from typing import Dict, Any, Optional, List, Tuple, Callable
 from dataclasses import dataclass, field
+import httpx
 import structlog
 
 from app.config import get_settings
+from app.core.harness.trace import LLMCallRecord, current_agent, current_trace
 
 logger = structlog.get_logger()
 
@@ -130,6 +132,15 @@ class VendorLimiter:
 # ═══════════════════════════════════════════════════════════
 
 RETRYABLE_STATUS = {429, 500, 502, 503, 504}
+MAX_NETWORK_RETRIES = 2
+
+
+def _is_network_error(e: Exception) -> bool:
+    """Timeouts / dropped connections (httpx, openai SDK, asyncio)."""
+    if isinstance(e, (httpx.TransportError, asyncio.TimeoutError, ConnectionError)):
+        return True
+    name = type(e).__name__
+    return "Timeout" in name or "Connection" in name
 
 
 async def exponential_backoff_retry(
@@ -138,7 +149,11 @@ async def exponential_backoff_retry(
     base_delay: float = 1.0,
     max_delay: float = 30.0,
 ) -> Any:
-    """Retry async function with capped exponential backoff + jitter."""
+    """Retry async function with capped exponential backoff + jitter.
+
+    HTTP 429/5xx are retried up to max_retries; network errors only up to
+    MAX_NETWORK_RETRIES, since a dead endpoint rarely comes back in seconds.
+    """
     attempt = 0
     while True:
         try:
@@ -149,7 +164,13 @@ async def exponential_backoff_retry(
             if hasattr(e, "response"):
                 status = getattr(e.response, "status_code", status)
 
-            if status not in RETRYABLE_STATUS or attempt >= max_retries:
+            if status in RETRYABLE_STATUS:
+                limit = max_retries
+            elif _is_network_error(e):
+                limit = min(max_retries, MAX_NETWORK_RETRIES)
+            else:
+                raise
+            if attempt >= limit:
                 raise
 
             sleep = min(max_delay, base_delay * (2**attempt))
@@ -171,34 +192,56 @@ async def exponential_backoff_retry(
 
 
 class ResponseCache:
-    """Simple in-memory LRU cache for deterministic LLM responses."""
+    """In-memory LRU cache for deterministic (temperature=0) LLM responses.
+
+    Stores the whole result (content + function_calls) so a cache hit on a
+    tool-calling turn still returns the tool calls.
+    """
 
     def __init__(self, max_size: int = 500):
-        self._cache: Dict[str, Tuple[str, float]] = {}
+        self._cache: "OrderedDict[str, Dict[str, Any]]" = OrderedDict()
         self.max_size = max_size
         self.hits = 0
         self.misses = 0
 
     @staticmethod
-    def _key(provider: str, messages: List[Dict], model: str) -> str:
-        raw = json.dumps({"p": provider, "m": messages, "model": model}, sort_keys=True)
+    def _key(
+        provider: str, messages: List[Dict], model: str, tools: Optional[List[Dict]] = None
+    ) -> str:
+        raw = json.dumps(
+            {"p": provider, "m": messages, "model": model, "t": tools or []},
+            sort_keys=True,
+            default=str,
+        )
         return hashlib.sha256(raw.encode()).hexdigest()
 
-    def get(self, provider: str, messages: List[Dict], model: str) -> Optional[str]:
-        key = self._key(provider, messages, model)
+    def get(
+        self, provider: str, messages: List[Dict], model: str, tools: Optional[List[Dict]] = None
+    ) -> Optional[Dict[str, Any]]:
+        key = self._key(provider, messages, model, tools)
         if key in self._cache:
             self.hits += 1
-            return self._cache[key][0]
+            self._cache.move_to_end(key)
+            return dict(self._cache[key])
         self.misses += 1
         return None
 
-    def set(self, provider: str, messages: List[Dict], model: str, response: str):
-        key = self._key(provider, messages, model)
-        if len(self._cache) >= self.max_size:
-            # Evict oldest
-            oldest_key = min(self._cache, key=lambda k: self._cache[k][1])
-            del self._cache[oldest_key]
-        self._cache[key] = (response, time.time())
+    def set(
+        self,
+        provider: str,
+        messages: List[Dict],
+        model: str,
+        response: Dict[str, Any],
+        tools: Optional[List[Dict]] = None,
+    ):
+        key = self._key(provider, messages, model, tools)
+        self._cache[key] = {
+            "content": response.get("content", ""),
+            "function_calls": response.get("function_calls") or [],
+        }
+        self._cache.move_to_end(key)
+        while len(self._cache) > self.max_size:
+            self._cache.popitem(last=False)
 
 
 # ═══════════════════════════════════════════════════════════
@@ -249,17 +292,30 @@ FALLBACK_CHAIN = {
 }
 
 
+# Max in-flight requests per provider. Local servers (LM Studio, Ollama)
+# generally serve one request at a time, so piling up 4+ parallel agents on
+# them only causes timeouts.
+DEFAULT_PROVIDER_CONCURRENCY = {
+    "ollama": 2,
+    "lmstudio": 2,
+}
+DEFAULT_CLOUD_CONCURRENCY = 8
+
+
 class LLMGateway:
     """
     Central gateway that all code uses instead of calling Gemini/Mistral/Ollama directly.
 
     Features:
     - Token + request budgeting per vendor
-    - Automatic fallback when quota is tight
-    - Exponential backoff retry on 429/5xx
+    - Availability-aware routing: skips offline local servers and cloud
+      vendors with no API key instead of failing every call on them
+    - Automatic fallback when quota is tight or a call fails
+    - Exponential backoff retry on 429/5xx and transient network errors
+    - Per-provider concurrency limits
     - Response caching for deterministic calls
     - Hybrid compression (local summarize → cloud reason)
-    - Usage analytics
+    - Usage analytics + per-run tracing (app.core.harness.trace)
     """
 
     def __init__(self):
@@ -267,6 +323,7 @@ class LLMGateway:
         self.cache = ResponseCache()
         self.counter = TokenCounter()
         self._call_log: deque = deque(maxlen=1000)
+        self._semaphores: Dict[str, asyncio.Semaphore] = {}
 
         # Initialize limiters for all vendors
         for vendor, limits in DEFAULT_VENDOR_LIMITS.items():
@@ -284,23 +341,74 @@ class LLMGateway:
             tpm=limits.max_tpm,
         )
 
+    def _semaphore(self, provider: str) -> asyncio.Semaphore:
+        sem = self._semaphores.get(provider)
+        if sem is None:
+            sem = asyncio.Semaphore(
+                DEFAULT_PROVIDER_CONCURRENCY.get(provider, DEFAULT_CLOUD_CONCURRENCY)
+            )
+            self._semaphores[provider] = sem
+        return sem
+
+    def _apply_dynamic_gemini_limits(self):
+        """Gemini Pro has far lower free-tier limits than Flash."""
+        settings = get_settings()
+        current_model = settings.GEMINI_MODEL.lower()
+        is_flash = "flash" in current_model
+        new_limits = VendorLimits(
+            max_rpm=15 if is_flash else 2,
+            max_tpm=1_000_000 if is_flash else 32_000,
+            max_rpd=1_500 if is_flash else 50,
+        )
+        if self.limiters["gemini"].limits != new_limits:
+            self.limiters["gemini"].limits = new_limits
+            logger.info(
+                "dynamic_gemini_limits_applied",
+                model=current_model,
+                is_flash=is_flash,
+            )
+
+    async def _is_available(self, provider: str) -> bool:
+        from app.core.llm.model_router import get_model_router
+
+        return await get_model_router().is_provider_available(provider)
+
+    async def _resolve_provider(
+        self, provider: str, est_tokens: int
+    ) -> Tuple[Optional[str], bool]:
+        """Pick the provider to use: the requested one if it is reachable and
+        under quota, else the first such provider in its fallback chain."""
+        limiter = self.limiters.get(provider)
+        if await self._is_available(provider) and (
+            limiter is None or limiter.can_send(est_tokens)
+        ):
+            return provider, False
+        return await self._find_available_provider(provider, est_tokens)
+
     async def call(
         self,
         provider: str,
         prompt: str,
         system_prompt: Optional[str] = None,
         tools: Optional[List[Dict]] = None,
-        max_tokens: int = 1024,
+        max_tokens: Optional[int] = None,
         temperature: float = 0.7,
         use_cache: bool = True,
+        agent: Optional[str] = None,
     ) -> Dict[str, Any]:
         """
         Central LLM call — all requests go through here.
 
-        Returns: {"content": str, "provider_used": str, "tokens_est": int,
-                  "cached": bool, "fallback_used": bool, ...}
+        max_tokens is forwarded only when given; otherwise each client keeps
+        its own default (e.g. 12k for LM Studio, 16k for NVIDIA thinking models).
+
+        Returns: {"content": str, "function_calls": list, "provider_used": str,
+                  "tokens_est": int, "cached": bool, "fallback_used": bool, ...}
         """
         from app.core.llm import get_llm_client
+
+        agent = agent or current_agent()
+        started = time.time()
 
         messages = []
         if system_prompt:
@@ -308,103 +416,114 @@ class LLMGateway:
         messages.append({"role": "user", "content": prompt})
 
         est_in = self.counter.estimate_messages(messages)
-        est_total = est_in + max_tokens
+        est_total = est_in + (max_tokens or 1024)
+        cacheable = use_cache and temperature == 0
 
-        # ── Cache check (only for temperature=0) ──
-        if use_cache and temperature == 0:
-            settings = get_settings()
-            model = self._get_model_name(provider, settings)
-            cached = self.cache.get(provider, messages, model)
-            if cached:
-                logger.info("llm_cache_hit", provider=provider)
-                return {
-                    "content": cached,
-                    "provider_used": provider,
-                    "tokens_est": est_total,
-                    "cached": True,
-                    "fallback_used": False,
-                }
+        def _finish(result: Dict[str, Any]) -> Dict[str, Any]:
+            trace = current_trace()
+            if trace is not None:
+                trace.record_llm(
+                    LLMCallRecord(
+                        provider=result.get("provider_used", provider),
+                        agent=agent,
+                        latency_ms=round((time.time() - started) * 1000, 1),
+                        tokens_est=result.get("tokens_est", 0),
+                        cached=result.get("cached", False),
+                        fallback_used=result.get("fallback_used", False),
+                        error=result.get("error"),
+                    )
+                )
+            return result
 
-        # ── Rate limit check + fallback chain ──
-        actual_provider = provider
-        fallback_used = False
-
-        # Dynamic limit adjustment for Gemini (Flash vs Pro)
         if provider == "gemini":
-            settings = get_settings()
-            current_model = settings.GEMINI_MODEL.lower()
-            is_flash = "flash" in current_model
+            self._apply_dynamic_gemini_limits()
 
-            # Switch limits if needed
-            new_limits = VendorLimits(
-                max_rpm=15 if is_flash else 2,
-                max_tpm=1_000_000 if is_flash else 32_000,
-                max_rpd=1_500 if is_flash else 50,
-            )
-
-            # Update internal limiter if limits differ
-            if self.limiters["gemini"].limits != new_limits:
-                self.limiters["gemini"].limits = new_limits
-                logger.info(
-                    "dynamic_gemini_limits_applied",
-                    model=current_model,
-                    is_flash=is_flash,
+        # ── Pick a reachable provider with quota (or walk the fallback chain) ──
+        actual_provider, fallback_used = await self._resolve_provider(
+            provider, est_total
+        )
+        if actual_provider is None:
+            if not await self._is_available(provider):
+                # Nothing else is reachable either — try the requested one and
+                # let it surface its real error.
+                actual_provider, fallback_used = provider, False
+            else:
+                return _finish(
+                    {
+                        "content": "[Rate limited] All providers over quota. Try again later.",
+                        "function_calls": [],
+                        "provider_used": "none",
+                        "tokens_est": est_total,
+                        "cached": False,
+                        "fallback_used": True,
+                        "error": "all_providers_over_quota",
+                    }
                 )
 
-        limiter = self.limiters.get(provider)
-        if limiter and not limiter.can_send(est_total):
-            # Try fallback chain
-            actual_provider, fallback_used = self._find_available_provider(
-                provider, est_total
-            )
-            if actual_provider is None:
-                return {
-                    "content": "[Rate limited] All providers over quota. Try again later.",
-                    "provider_used": "none",
-                    "tokens_est": est_total,
-                    "cached": False,
-                    "fallback_used": True,
-                    "error": "all_providers_over_quota",
-                }
+        # ── Cache check (only for temperature=0) ──
+        model = self._get_model_name(actual_provider, get_settings())
+        if cacheable:
+            cached = self.cache.get(actual_provider, messages, model, tools)
+            if cached is not None:
+                logger.info("llm_cache_hit", provider=actual_provider, agent=agent)
+                return _finish(
+                    {
+                        **cached,
+                        "provider_used": actual_provider,
+                        "tokens_est": est_total,
+                        "cached": True,
+                        "fallback_used": fallback_used,
+                    }
+                )
 
-        # ── Execute with retry ──
-        client = get_llm_client(actual_provider)
-
-        async def do_call():
-            return await client.generate(
-                prompt=prompt,
-                system_prompt=system_prompt,
-                tools=tools,
-            )
-
+        tried: List[str] = []
+        last_error: Optional[Exception] = None
         result = None
-        try:
-            result = await exponential_backoff_retry(do_call)
-        except Exception as e:
-            logger.error("llm_call_failed", provider=actual_provider, error=str(e))
-            # Last resort: try local if we haven't already
-            if actual_provider not in ("ollama", "lmstudio"):
-                try:
-                    client = get_llm_client("ollama")
-                    result = await client.generate(
-                        prompt=prompt, system_prompt=system_prompt
-                    )
-                    actual_provider = "ollama"
+        candidate: Optional[str] = actual_provider
+        while candidate is not None:
+            tried.append(candidate)
+            client = get_llm_client(candidate)
+
+            gen_kwargs: Dict[str, Any] = {"temperature": temperature}
+            if max_tokens is not None:
+                gen_kwargs["max_tokens"] = max_tokens
+
+            async def do_call(client=client, gen_kwargs=gen_kwargs):
+                return await client.generate(
+                    prompt=prompt,
+                    system_prompt=system_prompt,
+                    tools=tools,
+                    **gen_kwargs,
+                )
+
+            try:
+                async with self._semaphore(candidate):
+                    result = await exponential_backoff_retry(do_call)
+                actual_provider = candidate
+                break
+            except Exception as e:
+                last_error = e
+                logger.error(
+                    "llm_call_failed", provider=candidate, agent=agent, error=str(e)[:300]
+                )
+                candidate = await self._next_fallback(provider, tried, est_total)
+                if candidate is not None:
                     fallback_used = True
-                except Exception as fallback_err:
-                    logger.error("llm_fallback_failed", error=str(fallback_err))
-            
-            if result is None:
-                return {
-                    "content": f"[Error] LLM call failed: {str(e)[:200]}",
-                    "provider_used": actual_provider,
+
+        if result is None:
+            return _finish(
+                {
+                    "content": f"[Error] LLM call failed: {str(last_error)[:200]}",
+                    "function_calls": [],
+                    "provider_used": tried[-1] if tried else provider,
                     "tokens_est": est_total,
                     "cached": False,
                     "fallback_used": fallback_used,
-                    "error": str(e),
+                    "error": str(last_error),
                 }
+            )
 
-        content = result.get("content", "")
+        content = result.get("content", "") or ""
         actual_tokens = self.counter.estimate(content) + est_in
 
         # Register usage
@@ -412,29 +531,33 @@ class LLMGateway:
             self.limiters[actual_provider].register(actual_tokens)
 
         # Cache deterministic responses
-        if use_cache and temperature == 0 and content:
-            settings = get_settings()
-            model = self._get_model_name(actual_provider, settings)
-            self.cache.set(actual_provider, messages, model, content)
+        if cacheable and (content or result.get("function_calls")):
+            model = self._get_model_name(actual_provider, get_settings())
+            self.cache.set(actual_provider, messages, model, result, tools)
 
         # Log call
         self._call_log.append(
             {
                 "provider": actual_provider,
+                "agent": agent,
                 "tokens": actual_tokens,
                 "fallback": fallback_used,
                 "cached": False,
+                "latency_ms": round((time.time() - started) * 1000, 1),
                 "time": time.time(),
             }
         )
 
-        return {
-            **result,
-            "provider_used": actual_provider,
-            "tokens_est": actual_tokens,
-            "cached": False,
-            "fallback_used": fallback_used,
-        }
+        return _finish(
+            {
+                **result,
+                "function_calls": result.get("function_calls") or [],
+                "provider_used": actual_provider,
+                "tokens_est": actual_tokens,
+                "cached": False,
+                "fallback_used": fallback_used,
+            }
+        )
 
     async def hybrid_reasoning(
         self,
@@ -481,17 +604,27 @@ class LLMGateway:
             temperature=0.2,
         )
 
-    def _find_available_provider(
+    async def _find_available_provider(
         self, original: str, est_tokens: int
     ) -> Tuple[Optional[str], bool]:
-        """Walk the fallback chain to find a provider with quota."""
-        chain = FALLBACK_CHAIN.get(original, ["ollama"])
-        for alt in chain:
+        """Walk the fallback chain to find a reachable provider with quota."""
+        alt = await self._next_fallback(original, [original], est_tokens)
+        if alt is not None:
+            logger.info("fallback_provider", original=original, fallback=alt)
+        return alt, True
+
+    async def _next_fallback(
+        self, original: str, tried: List[str], est_tokens: int
+    ) -> Optional[str]:
+        for alt in FALLBACK_CHAIN.get(original, ["ollama"]):
+            if alt in tried:
+                continue
             limiter = self.limiters.get(alt)
-            if limiter is None or limiter.can_send(est_tokens):
-                logger.info("fallback_provider", original=original, fallback=alt)
-                return alt, True
-        return None, True
+            if limiter is not None and not limiter.can_send(est_tokens):
+                continue
+            if await self._is_available(alt):
+                return alt
+        return None
 
     @staticmethod
     def _get_model_name(provider: str, settings) -> str:

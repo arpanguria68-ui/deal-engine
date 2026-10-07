@@ -90,13 +90,14 @@ class BusinessAnalystAgent(BaseAgent):
 
         try:
             # We enforce JSON output directly from the LLM endpoint or by pure parsing
-            result = await self.llm.generate(prompt, self.system_prompt)
+            result = await self.llm_generate(prompt, self.system_prompt)
             data = self._parse_json_result(result)
 
             return AgentOutput(
                 success=True,
                 data=data,
                 reasoning="Synthesized agent outputs into a McKinsey-style SCQA structured JSON payload.",
+                confidence=0.8,
             )
         except Exception as e:
             self.logger.error("Business Analyst synthesis failed", error=str(e))
@@ -104,6 +105,7 @@ class BusinessAnalystAgent(BaseAgent):
                 success=False,
                 data={"error": str(e)},
                 reasoning=f"Failed to generate structured synthesis: {str(e)}",
+                confidence=0.0,
             )
 
     def _parse_json_result(self, result: Any) -> Dict[str, Any]:

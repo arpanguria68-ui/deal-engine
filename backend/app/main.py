@@ -1106,7 +1106,25 @@ async def run_deal_workflow(deal_id: str):
         "final_recommendation": final_state.get("final_recommendation"),
         "stage_history": final_state.get("stage_history", []),
         "completed_at": final_state.get("completed_at"),
+        "harness_trace": final_state.get("harness_trace"),
     }
+
+
+@app.get("/api/v1/harness/traces")
+async def list_harness_traces():
+    """Summaries of the most recent deal-run traces (LLM/tool calls, tokens, latency)"""
+    orchestrator = get_orchestrator_instance()
+    return {"traces": [t.summary() for t in reversed(list(orchestrator.traces.values()))]}
+
+
+@app.get("/api/v1/harness/traces/{deal_id}")
+async def get_harness_trace(deal_id: str):
+    """Full call-level trace of the latest run of a deal"""
+    orchestrator = get_orchestrator_instance()
+    trace = orchestrator.traces.get(deal_id)
+    if trace is None:
+        raise HTTPException(status_code=404, detail="No trace recorded for this deal")
+    return trace.to_dict()
 
 
 @app.get("/api/v1/deals/{deal_id}/status")
