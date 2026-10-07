@@ -108,6 +108,17 @@ class VendorLimiter:
                 limit=self.limits.max_rpd,
             )
             return False
+        if (
+            self.limits.max_tokens_month > 0
+            and self.tok_month.total() + est_tokens > self.limits.max_tokens_month
+        ):
+            logger.warning(
+                "rate_limit_monthly_tokens",
+                vendor=self.name,
+                current=self.tok_month.total(),
+                limit=self.limits.max_tokens_month,
+            )
+            return False
         return True
 
     def register(self, tokens_used: int):
@@ -330,6 +341,24 @@ class LLMGateway:
             self.limiters[vendor] = VendorLimiter(vendor, limits)
 
         logger.info("LLMGateway initialized", vendors=list(self.limiters.keys()))
+
+    def set_vendor_limits(self, vendor: str, limits: VendorLimits):
+        """Change a vendor's limits, keeping its usage windows.
+
+        update_vendor_limits() replaces the limiter, which zeroes the counters
+        — calling it repeatedly would reset rate limiting.
+        """
+        limiter = self.limiters.get(vendor)
+        if limiter is None:
+            self.limiters[vendor] = VendorLimiter(vendor, limits)
+        else:
+            limiter.limits = limits
+        logger.info(
+            "vendor_limits_updated",
+            vendor=vendor,
+            rpm=limits.max_rpm,
+            tpm=limits.max_tpm,
+        )
 
     def update_vendor_limits(self, vendor: str, limits: VendorLimits):
         """Update rate limits for a vendor (e.g., when user changes tier)."""

@@ -169,7 +169,7 @@ class SettingsService:
                     rpm = gateway_cfg.get(f"{vendor}_max_rpm")
                     tpm = gateway_cfg.get(f"{vendor}_max_tpm")
                     if rpm or tpm:
-                        gw.update_vendor_limits(
+                        gw.set_vendor_limits(
                             vendor,
                             VendorLimits(
                                 max_rpm=rpm or 50,

@@ -66,6 +66,63 @@ what is still open.
 | 30 | **Compiler bug.** `ReportCompilerAgent` read `res["result"]["data"]`, but tool results have always been `{name, success, data}`. | Generated report files were never returned. |
 | 31 | **Repo hygiene.** Committed logs, `*_out.txt` dumps and `.bak` files are untracked and ignored. | Repo noise. |
 
+### Round 3: decision layer and usage guardrails
+
+Each problem below was reproduced by running deals through the harness with
+one agent's output replaced.
+
+| Scenario | Before | After |
+|---|---|---|
+| Scoring agent fails | Workflow crashed (`None >= 75`) | HOLD + human review |
+| One analysis agent errors | Whole deal crashed: "retry" re-ran screening, then `"REJECT" in None` | Only the failed agent is retried once, then the run continues without it; verdict capped |
+| Red Team severity-5 "fraud indicators" survive the loop-back, score 85 | **PROCEED - Strong investment opportunity** | HOLD + human review |
+| Score 80, critical risk | HOLD, no escalation | HOLD + human review |
+| HaluGate throws | Silently treated as passed | Recorded as unverified; verdict capped at CAUTION |
+| HaluGate blocks | Decision node skipped; no decision record | Goes through the decision node → BLOCKED with reasons |
+
+The decision now lives in `app/core/decision/policy.py`, a pure,
+unit-tested function. The score sets a base verdict; guardrails can only cap
+it, never upgrade it:
+
+| Gate | Cap | Human review |
+|---|---|---|
+| HaluGate contradiction | BLOCKED | yes |
+| No score | HOLD | yes |
+| Red Team severity ≥ 4 (configurable) | HOLD | yes |
+| Critical risk | HOLD | yes |
+| Data coverage < 30 % | HOLD | — |
+| Core agent (financial/legal) failed | HOLD | yes |
+| Other agent failed / material cross-agent contradiction / narrative unverified | PROCEED WITH CAUTION | — |
+| `require_human_approval: true` | — | always |
+
+Results are recorded in the deal state:
+- `decision`: verdict, base verdict, score, risk, reasons, and the caps applied.
+- `awaiting_decision` and `decision_request`: used when human review is needed.
+- `degraded_agents`: agents that failed and were skipped.
+
+Thresholds are set through the workflow config `decision_policy` (the fields
+of `DecisionPolicy`). The previously dead config keys
+`require_human_approval` and `max_tokens_month` are now enforced.
+
+**Usage guardrails**
+
+| Finding | Fix |
+|---|---|
+| No authentication on any endpoint. Anyone reaching the server could change API keys (`POST /settings`), rate limits, or proxy arbitrary LLM calls (`/gateway/call`). | Opt-in API key: set `DEALFORGE_API_KEY` and every `/api/` route needs `Authorization: Bearer <key>` or `X-API-Key`. Health probes stay public. A startup warning is logged while unset. |
+| No per-client limit; one client could exhaust vendor quota for everyone. | 14 LLM-spending endpoints share a per-client sliding window (`DEALFORGE_LLM_RPM`, default 30/min) and return 429 with `Retry-After`. |
+| Prompt guard covered 5 chat endpoints. `/agents/run`, `/gateway/call`, `/gateway/hybrid`, `/codex/generate` and OFAS missions were unguarded. | All of them are guarded and return 400 on failure. |
+| The guard blocked "attack", "exploit", "hack" and "virus", rejecting normal diligence prompts ("exploit synergies", "cyber-attack exposure", a virus-diagnostics target). The length limit only warned. Full prompts were logged. | It now blocks injection and secret-exfiltration attempts and control characters, enforces the length limit (`DEALFORGE_MAX_PROMPT_CHARS`, default 8000), and logs only length + hash. |
+| `/gateway/limits` took unvalidated values for any vendor name, and *replaced* the limiter, zeroing its counters. Re-posting reset rate limiting. | Validated, and updates in place (`set_vendor_limits`). Settings saves use it too. |
+| `/gateway/call` passed `max_tokens`/`temperature` through unchecked and returned the raw SDK response. | Values are clamped (≤ 8192 tokens, 0–2) and `raw_response` is stripped. |
+| No per-deal spend ceiling by default. | Default `run_budget` of 200 LLM calls as a runaway backstop. |
+
+**Still open in this area:** HaluGate only checks the scorer's short
+recommendation strings against the financial output. It skips whenever those
+are empty, so most runs are "unverified". Pointing it at the agents' own
+narratives (financial and market reasoning) would make it a real check. The
+API key is opt-in so the current frontend keeps working; the frontend needs to
+send it before you turn it on.
+
 ### Still open (recommendations, not changed here)
 
 - **Tool rounds replay the whole prompt.** Clients take a single `prompt` string, so every round re-sends the original prompt plus all results. Moving to multi-turn `messages` would let provider prompt caching apply.
@@ -177,7 +234,12 @@ python -m pytest tests/harness -q
 | Local health cache | `model_router.HEALTH_TTL_SECONDS` | 30 s |
 | Network retries | `llm_gateway.MAX_NETWORK_RETRIES` | 2 |
 | Graph step limit | workflow config `recursion_limit` | 60 |
-| Per-run spend cap | workflow config `run_budget` / `run_deal(budget=)` | none |
+| Per-run spend cap | workflow config `run_budget` / `run_deal(budget=)` | 200 LLM calls |
+| Decision thresholds & gates | workflow config `decision_policy` | see `DecisionPolicy` |
+| Analysis-agent retries before degrading | workflow config `max_agent_retries` | 1 |
+| API key | env `DEALFORGE_API_KEY` | unset (open) |
+| LLM requests per client per minute | env `DEALFORGE_LLM_RPM` | 30 |
+| Max prompt length | env `DEALFORGE_MAX_PROMPT_CHARS` | 8000 |
 | Reuse screening market output | workflow config `reuse_screening_market_output` | True |
 | JSON repair | `generate_with_tools(expect_json=)` | True |
 | Add a provider | `app.core.llm.register_llm_client(name, factory)` | — |

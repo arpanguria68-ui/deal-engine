@@ -43,6 +43,7 @@ from app.agents.report_architect_agent import ReportArchitectAgent
 from app.agents.advanced_financial_modeler import AdvancedFinancialModelerAgent
 from app.core.halugate import HaluGateEngine, HaluGateSeverity
 from app.core.harness.trace import RunBudget, RunTrace, agent_scope, start_trace
+from app.core.decision import DecisionPolicy, decide
 
 # Traces of the most recent deal runs kept in memory for the harness API.
 MAX_KEPT_TRACES = 50
@@ -68,10 +69,14 @@ class DealOrchestrator:
         """Default workflow configuration"""
         return {
             "max_iterations": 10,
+            "max_agent_retries": 1,
+            # Decision guardrails (app.core.decision.DecisionPolicy fields)
+            "decision_policy": {},
             "recursion_limit": 60,
             "reuse_screening_market_output": True,
-            # Optional per-run spending cap, e.g. {"max_llm_calls": 60, "max_tokens": 500_000}
-            "run_budget": None,
+            # Per-run spending cap. The default is a runaway backstop (a normal
+            # deal uses ~10-60 calls); set None to disable.
+            "run_budget": {"max_llm_calls": 200, "max_tokens": None},
             "timeout_seconds": 300,
             "parallel_execution": True,
             "max_concurrent_agents": 4,
@@ -243,7 +248,7 @@ class DealOrchestrator:
             self._should_continue_after_halugate,
             {
                 "report_architect": "report_architect",
-                "escalate": "complete",
+                "escalate": "decision",
                 "error": "error_handler",
             },
         )
@@ -280,7 +285,7 @@ class DealOrchestrator:
         workflow.add_conditional_edges(
             "error_handler",
             self._handle_error_decision,
-            {"complete": "complete", "retry": "screening"},
+            {"retry": "parallel_analysis", "degrade": "consistency_check"},
         )
 
         # Complete is terminal
@@ -387,6 +392,19 @@ class DealOrchestrator:
             agents_to_run = [a for a in agents_to_run if a[0] != "market_researcher"]
             state = set_agent_state(state, "market_researcher", AgentState.COMPLETED)
             self.logger.info("Reusing screening market output", deal_id=state["deal_id"])
+
+        # Error-handler retry: only re-run the agents that failed
+        if state.get("retry_failed_only"):
+            done = state.get("agent_states") or {}
+            agents_to_run = [
+                a for a in agents_to_run if done.get(a[0]) != AgentState.COMPLETED
+            ]
+            state = update_state(state, {"retry_failed_only": False})
+            self.logger.info(
+                "Retrying failed agents only",
+                deal_id=state["deal_id"],
+                agents=[a[0] for a in agents_to_run],
+            )
 
         if self.config.get("parallel_execution", True):
             # Run agents in parallel
@@ -785,6 +803,7 @@ class DealOrchestrator:
                     # Store results in context
                     ctx = (state.get("context") or {})
                     ctx["halugate_results"] = {
+                        "verified": True,
                         "blocked": blocked,
                         "severity_summary": severity_summary,
                         "total_claims_checked": len(results),
@@ -813,6 +832,13 @@ class DealOrchestrator:
 
             except Exception as e:
                 self.logger.error("HaluGate verification failed", error=str(e))
+                ctx = (state.get("context") or {})
+                ctx["halugate_results"] = {
+                    "verified": False,
+                    "blocked": False,
+                    "error": str(e)[:300],
+                }
+                state = update_state(state, {"context": ctx})
 
         return state
 
@@ -966,56 +992,78 @@ class DealOrchestrator:
         return state
 
     async def _node_decision(self, state: DealState) -> DealState:
-        """Generate final decision"""
+        """Generate the final decision through the guarded decision policy"""
         self.logger.info("Generating decision", deal_id=state["deal_id"])
 
         state = update_state(state, {"current_stage": DealStage.DECISION})
         state = add_stage_to_history(state, DealStage.DECISION)
 
-        # Generate recommendation based on score
-        score = state.get("final_score", 0)
-        scoring_output = (state.get("scoring_output") or {})
-        risk_level = scoring_output.get("risk_level", "medium")
+        decision = decide(state, DecisionPolicy.from_config(self.config))
+        self.logger.info(
+            "Deal decision",
+            deal_id=state["deal_id"],
+            verdict=decision.verdict.value,
+            base=decision.base_verdict.value if decision.base_verdict else None,
+            caps=[c["gate"] for c in decision.caps_applied],
+            human_review=decision.requires_human_review,
+        )
 
-        if score >= 75 and risk_level in ["low", "moderate"]:
-            recommendation = "PROCEED - Strong investment opportunity"
-        elif score >= 60 and risk_level in ["low", "moderate", "high"]:
-            recommendation = "PROCEED WITH CAUTION - Address identified risks"
-        elif score >= 40:
-            recommendation = "HOLD - Requires further due diligence"
-        else:
-            recommendation = "REJECT - Does not meet investment criteria"
-
-        state = update_state(state, {"final_recommendation": recommendation})
-
-        return state
+        updates = {
+            "final_recommendation": decision.recommendation,
+            "decision": decision.to_dict(),
+            "awaiting_decision": decision.requires_human_review,
+        }
+        if decision.requires_human_review:
+            updates["decision_request"] = {
+                "type": "human_review",
+                "proposed_verdict": decision.verdict.value,
+                "reasons": decision.reasons,
+                "caps_applied": decision.caps_applied,
+            }
+        return update_state(state, updates)
 
     async def _node_error_handler(self, state: DealState) -> DealState:
-        """Handle errors in workflow"""
-        self.logger.error("Handling workflow error", deal_id=state["deal_id"])
+        """Handle failed analysis agents.
 
+        Retries only the agents that failed (up to max_agent_retries). If they
+        still fail, the run continues without them: they are recorded in
+        degraded_agents and the decision layer caps the verdict accordingly.
+        """
         error_agents = get_error_agents(state)
-
-        # Check if we should retry
         retry_count = state.get("retry_count", 0)
-        max_retries = 2
+        max_retries = self.config.get("max_agent_retries", 1)
+        self.logger.error(
+            "Handling workflow error",
+            deal_id=state["deal_id"],
+            failed=error_agents,
+            retry=retry_count,
+        )
 
+        agent_states = dict(state.get("agent_states") or {})
         if retry_count < max_retries:
+            for name in error_agents:
+                agent_states[name] = AgentState.PENDING
             return update_state(
                 state,
                 {
                     "retry_count": retry_count + 1,
-                    "error_message": f"Retrying after errors from: {', '.join(error_agents)}",
+                    "agent_states": agent_states,
+                    "retry_failed_only": True,
+                    "error_message": None,
                 },
             )
-        else:
-            return update_state(
-                state,
-                {
-                    "error_message": f"Max retries exceeded. Failed agents: {', '.join(error_agents)}",
-                    "final_recommendation": "ERROR - Workflow failed",
-                },
-            )
+
+        for name in error_agents:
+            agent_states.pop(name, None)  # no longer "in error": run proceeds without it
+        degraded = sorted(set((state.get("degraded_agents") or []) + error_agents))
+        return update_state(
+            state,
+            {
+                "agent_states": agent_states,
+                "degraded_agents": degraded,
+                "error_message": None,
+            },
+        )
 
     async def _node_complete(self, state: DealState) -> DealState:
         """Complete the workflow and flush provenance to DB."""
@@ -1049,7 +1097,7 @@ class DealOrchestrator:
     def _should_continue_to_analysis(self, state: DealState) -> str:
         """Determine if we should proceed to analysis"""
         if state.get("error_message"):
-            if "REJECT" in state.get("final_recommendation", ""):
+            if "REJECT" in (state.get("final_recommendation") or ""):
                 return "reject"
             return "error"
         return "analysis"
@@ -1058,7 +1106,12 @@ class DealOrchestrator:
         """Determine if we should proceed to Advanced Financial Modeler"""
         if has_errors(state):
             return "error"
-        required = ["financial_analyst", "legal_advisor", "risk_assessor"]
+        degraded = set(state.get("degraded_agents") or [])
+        required = [
+            a
+            for a in ["financial_analyst", "legal_advisor", "risk_assessor"]
+            if a not in degraded
+        ]
         if not all_agents_completed(state, required):
             return "wait"
         return "advanced_financial"
@@ -1165,13 +1218,10 @@ class DealOrchestrator:
         return "complete"
 
     def _handle_error_decision(self, state: DealState) -> str:
-        """Decide how to handle errors"""
-        retry_count = state.get("retry_count", 0)
-        max_retries = 2
-
-        if retry_count < max_retries:
+        """Retry the failed agents, or continue degraded once retries are spent."""
+        if state.get("retry_failed_only"):
             return "retry"
-        return "complete"
+        return "degrade"
 
     # ===== Public API =====
 
