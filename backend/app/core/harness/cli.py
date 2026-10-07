@@ -11,6 +11,9 @@ Run DealForge agents from the command line with full call tracing.
     # the full LangGraph deal workflow
     python -m app.core.harness.cli deal --target "Acme Corp" --provider mock
 
+    # cap spend: refuse LLM calls beyond 40 calls / 300k tokens for the run
+    python -m app.core.harness.cli --max-llm-calls 40 --max-tokens 300000 deal --target "Acme"
+
     # list registered agents
     python -m app.core.harness.cli list
 
@@ -27,7 +30,7 @@ import uuid
 from dataclasses import asdict, is_dataclass
 from typing import Any, Dict, Optional
 
-from app.core.harness.trace import RunTrace, agent_scope, start_trace
+from app.core.harness.trace import RunBudget, RunTrace, agent_scope, start_trace
 
 
 def _jsonable(obj: Any) -> Any:
@@ -75,7 +78,11 @@ def _emit(result: Any, trace: RunTrace, trace_out: Optional[str]) -> None:
 
 
 async def run_agent(
-    name: str, task: str, context: Dict[str, Any], structured: bool
+    name: str,
+    task: str,
+    context: Dict[str, Any],
+    structured: bool,
+    budget: Optional[RunBudget] = None,
 ) -> tuple:
     from app.agents.base import get_agent_registry
 
@@ -84,13 +91,18 @@ async def run_agent(
         raise SystemExit(
             f"Unknown agent '{name}'. Available: {', '.join(get_agent_registry().list_agents())}"
         )
-    with start_trace(f"agent:{name}") as trace, agent_scope(name):
+    with start_trace(f"agent:{name}", budget=budget) as trace, agent_scope(name):
         runner = agent.run_with_structure if structured else agent.run
         result = await runner(task, context)
     return result, trace
 
 
-async def run_deal(target: str, deal_id: Optional[str], context: Dict[str, Any]) -> tuple:
+async def run_deal(
+    target: str,
+    deal_id: Optional[str],
+    context: Dict[str, Any],
+    budget: Optional[RunBudget] = None,
+) -> tuple:
     from app.orchestrator.graph import get_orchestrator
 
     orchestrator = get_orchestrator()
@@ -99,6 +111,7 @@ async def run_deal(target: str, deal_id: Optional[str], context: Dict[str, Any])
         deal_id=deal_id,
         deal_name=f"Deal-{target}",
         context={"target_company": target, "deal_id": deal_id, **context},
+        budget=budget,
     )
     return final_state, orchestrator.traces[str(deal_id)]
 
@@ -111,6 +124,8 @@ def main(argv=None) -> int:
     )
     parser.add_argument("--trace-out", help="Write the full call-level trace JSON here")
     parser.add_argument("-v", "--verbose", action="store_true", help="Show debug logs")
+    parser.add_argument("--max-llm-calls", type=int, help="Budget: max LLM calls for the run")
+    parser.add_argument("--max-tokens", type=int, help="Budget: max tokens for the run")
     sub = parser.add_subparsers(dest="command", required=True)
 
     p_agent = sub.add_parser("agent", help="Run a single agent")
@@ -149,12 +164,19 @@ def main(argv=None) -> int:
         return 0
 
     context = json.loads(args.context)
+    budget = (
+        RunBudget(max_llm_calls=args.max_llm_calls, max_tokens=args.max_tokens)
+        if args.max_llm_calls is not None or args.max_tokens is not None
+        else None
+    )
     if args.command == "agent":
         result, trace = asyncio.run(
-            run_agent(args.name, args.task, context, args.structured)
+            run_agent(args.name, args.task, context, args.structured, budget)
         )
     else:
-        result, trace = asyncio.run(run_deal(args.target, args.deal_id, context))
+        result, trace = asyncio.run(
+            run_deal(args.target, args.deal_id, context, budget)
+        )
     _emit(result, trace, trace_out)
     return 0
 

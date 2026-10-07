@@ -72,7 +72,8 @@ class ReportCompilerAgent(BaseAgent):
             if "tool_results" in response:
                 for res in response["tool_results"]:
                     if res.get("name") == "generate_report":
-                        output = res.get("result", {})
+                        # Tool-loop results are {name, success, data, error}
+                        output = res.get("result") or res
                         if output.get("success"):
                             data = output.get("data", {})
                             ext = data.get("file_extension")

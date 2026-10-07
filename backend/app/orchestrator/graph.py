@@ -42,7 +42,7 @@ from app.agents.complex_reasoning_agent import ComplexReasoningAgent
 from app.agents.report_architect_agent import ReportArchitectAgent
 from app.agents.advanced_financial_modeler import AdvancedFinancialModelerAgent
 from app.core.halugate import HaluGateEngine, HaluGateSeverity
-from app.core.harness.trace import RunTrace, agent_scope, start_trace
+from app.core.harness.trace import RunBudget, RunTrace, agent_scope, start_trace
 
 # Traces of the most recent deal runs kept in memory for the harness API.
 MAX_KEPT_TRACES = 50
@@ -69,6 +69,9 @@ class DealOrchestrator:
         return {
             "max_iterations": 10,
             "recursion_limit": 60,
+            "reuse_screening_market_output": True,
+            # Optional per-run spending cap, e.g. {"max_llm_calls": 60, "max_tokens": 500_000}
+            "run_budget": None,
             "timeout_seconds": 300,
             "parallel_execution": True,
             "max_concurrent_agents": 4,
@@ -367,6 +370,23 @@ class DealOrchestrator:
         peer_feedback = (
             debate_output.get("reviewer_feedback", []) if debate_output else []
         )
+
+        # Screening already ran market_researcher on this deal. On the first
+        # analysis pass (no loop-back, no reviewer feedback for it) reuse that
+        # output instead of paying for the same research twice.
+        first_pass = (
+            sum(1 for s in state.get("stage_history", []) if s == DealStage.DUE_DILIGENCE)
+            <= 1
+        )
+        if (
+            self.config.get("reuse_screening_market_output", True)
+            and first_pass
+            and state.get("market_output")
+            and not any(f.get("agent") == "market_researcher" for f in peer_feedback)
+        ):
+            agents_to_run = [a for a in agents_to_run if a[0] != "market_researcher"]
+            state = set_agent_state(state, "market_researcher", AgentState.COMPLETED)
+            self.logger.info("Reusing screening market output", deal_id=state["deal_id"])
 
         if self.config.get("parallel_execution", True):
             # Run agents in parallel
@@ -1156,7 +1176,11 @@ class DealOrchestrator:
     # ===== Public API =====
 
     async def run_deal(
-        self, deal_id: str, deal_name: str, context: Dict[str, Any] = None
+        self,
+        deal_id: str,
+        deal_name: str,
+        context: Dict[str, Any] = None,
+        budget: Optional[RunBudget] = None,
     ) -> DealState:
         """
         Run complete deal workflow
@@ -1165,6 +1189,7 @@ class DealOrchestrator:
             deal_id: Unique deal identifier
             deal_name: Deal name
             context: Initial context data
+            budget: Spending cap for this run (defaults to config["run_budget"])
 
         Returns:
             Final workflow state
@@ -1174,12 +1199,17 @@ class DealOrchestrator:
         # Create initial state
         initial_state = create_initial_state(deal_id, deal_name, context)
 
-        with start_trace(f"deal:{deal_id}") as trace:
+        if budget is None and self.config.get("run_budget"):
+            budget = RunBudget(**self.config["run_budget"])
+
+        with start_trace(f"deal:{deal_id}", budget=budget) as trace:
+            # Registered before the run so progress is visible while it runs
+            self.traces.pop(str(deal_id), None)
+            self.traces[str(deal_id)] = trace
+            while len(self.traces) > MAX_KEPT_TRACES:
+                self.traces.pop(next(iter(self.traces)))
             final_state = await self._invoke_graph(deal_id, initial_state)
 
-        self.traces[str(deal_id)] = trace
-        while len(self.traces) > MAX_KEPT_TRACES:
-            self.traces.pop(next(iter(self.traces)))
         summary = trace.summary()
         self.logger.info("Deal run trace", **summary)
         return {**final_state, "harness_trace": summary}

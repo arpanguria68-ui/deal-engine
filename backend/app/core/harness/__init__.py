@@ -8,6 +8,7 @@ Agent harness: the runtime layer agents execute through.
 """
 
 from app.core.harness.trace import (
+    RunBudget,
     RunTrace,
     agent_scope,
     current_agent,
@@ -15,4 +16,4 @@ from app.core.harness.trace import (
     start_trace,
 )
 
-__all__ = ["RunTrace", "agent_scope", "current_agent", "current_trace", "start_trace"]
+__all__ = ["RunBudget", "RunTrace", "agent_scope", "current_agent", "current_trace", "start_trace"]

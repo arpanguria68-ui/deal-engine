@@ -5,6 +5,7 @@ import json
 import os
 import structlog
 from app.config import get_settings
+from app.core.llm.usage import usage_from_openai
 
 logger = structlog.get_logger()
 
@@ -24,7 +25,10 @@ class NvidiaClient:
         self.model = model or getattr(settings, "NVIDIA_MODEL", "z-ai/glm5")
 
         # Initialize AsyncOpenAI with NVIDIA URL and key
-        self.client = AsyncOpenAI(base_url=self.base_url, api_key=self.api_key)
+        # The gateway owns retries; SDK retries would multiply them.
+        self.client = AsyncOpenAI(
+            base_url=self.base_url, api_key=self.api_key, max_retries=0
+        )
         self.provider = "nvidia"
         self.max_context = 16384
 
@@ -75,7 +79,8 @@ class NvidiaClient:
 
             result = {
                 "content": message.content or "", 
-                "raw_response": response.model_dump() if hasattr(response, "model_dump") else str(response)
+                "raw_response": response.model_dump() if hasattr(response, "model_dump") else str(response),
+                "usage": usage_from_openai(response),
             }
 
             if message.tool_calls:

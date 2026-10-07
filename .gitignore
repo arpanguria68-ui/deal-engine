@@ -36,3 +36,10 @@ ofas_outputs/
 temp_anthropic_plugins/
 temp_diff.txt
 .gemini/
+
+# Logs, scratch output and backups
+*.log
+*_out.txt
+*.bak
+backend/test_write.txt
+.pytest_cache/

@@ -14,7 +14,9 @@ Compared to it, this loop:
   a "not available" error the model sees on the next round);
 - truncates large tool payloads before feeding them back to the model;
 - parses ReAct JSON for local models with a brace-balanced scanner, so nested
-  args work and plain JSON answers are not mistaken for tool calls.
+  args work and plain JSON answers are not mistaken for tool calls;
+- when the caller expects JSON and the final answer isn't parseable, makes
+  one repair call asking the model to restate it as valid JSON.
 """
 
 import asyncio
@@ -42,6 +44,8 @@ class ToolLoopConfig:
     max_rounds: int = 3
     tool_timeout_s: float = 45.0
     max_result_chars: int = 4000
+    # Max chars of a malformed answer echoed back in the JSON-repair call
+    max_repair_chars: int = 12000
 
 
 # ═══════════════════════════════════════════════
@@ -119,6 +123,18 @@ def parse_react_tool_calls(content: str, allowed: set) -> List[Dict[str, Any]]:
             args = _loads_lenient(args) or {}
         calls.append({"name": name, "args": args if isinstance(args, dict) else {}})
     return calls
+
+
+def is_parseable_json(content: str) -> bool:
+    """True if the content holds a JSON object/array (fenced, bare, or
+    embedded in prose), tolerating trailing commas and <think> blocks."""
+    content = re.sub(r"<think>.*?</think>", "", content or "", flags=re.DOTALL).strip()
+    if not content:
+        return False
+    candidates = re.findall(r"```(?:json)?\s*(.*?)```", content, re.DOTALL)
+    candidates.append(content)
+    candidates.extend(extract_json_objects(content))
+    return any(isinstance(_loads_lenient(c.strip()), (dict, list)) for c in candidates)
 
 
 def build_react_instructions(tools: List[Dict]) -> str:
@@ -247,6 +263,28 @@ class ToolLoop:
         ]
         return json.dumps(compact, indent=2, default=str)
 
+    async def _repair_json(
+        self, response: Dict[str, Any], provider: str, temperature: float
+    ) -> Dict[str, Any]:
+        """One retry asking the model to restate a malformed answer as JSON."""
+        content = response.get("content", "") or ""
+        logger.warning("json_repair_attempt", agent=self.agent_name, chars=len(content))
+        repaired = await self.gateway.call(
+            provider=provider,
+            prompt=(
+                "The following response was supposed to be a single valid JSON "
+                "object but could not be parsed. Rewrite it as valid JSON, keeping "
+                "all of its information. Output only the JSON.\n\n"
+                + content[: self.config.max_repair_chars]
+            ),
+            system_prompt="You convert text into strictly valid JSON. Return only JSON.",
+            temperature=temperature,
+            agent=self.agent_name,
+        )
+        if not repaired.get("error") and is_parseable_json(repaired.get("content", "")):
+            return {**response, "content": repaired["content"], "json_repaired": True}
+        return response
+
     async def run(
         self,
         prompt: str,
@@ -254,6 +292,7 @@ class ToolLoop:
         system_prompt: Optional[str] = None,
         tools: Optional[List[Dict]] = None,
         temperature: float = 0.0,
+        expect_json: bool = True,
     ) -> Dict[str, Any]:
         tools = tools or []
         allowed = {t.get("function", t).get("name") for t in tools}
@@ -341,13 +380,24 @@ class ToolLoop:
                 prompt=(
                     f"{prompt}\n\n--- ALL TOOL RESULTS ---\n{self._feedback(accumulated)}"
                     "\n\nBased on all these results, provide your final comprehensive "
-                    "analysis in the requested JSON format. Ensure your output is purely JSON."
+                    + (
+                        "analysis in the requested JSON format. Ensure your output is purely JSON."
+                        if expect_json
+                        else "answer in the requested format."
+                    )
                 ),
                 system_prompt=system_prompt,
                 temperature=temperature,
                 agent=self.agent_name,
             )
             response = {**response, **final}
+
+        if (
+            expect_json
+            and not response.get("error")
+            and not is_parseable_json(response.get("content", ""))
+        ):
+            response = await self._repair_json(response, provider, temperature)
 
         if accumulated:
             response["tool_results"] = accumulated

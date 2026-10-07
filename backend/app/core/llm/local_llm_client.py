@@ -5,6 +5,7 @@ import json
 import httpx
 import structlog
 from app.config import get_settings
+from app.core.llm.usage import usage_from_ollama, usage_from_openai
 
 logger = structlog.get_logger()
 
@@ -67,7 +68,11 @@ class OllamaClient:
             message = data.get("message", {})
             content = message.get("content", "")
 
-            result = {"content": content, "raw_response": data}
+            result = {
+                "content": content,
+                "raw_response": data,
+                "usage": usage_from_ollama(data),
+            }
 
             # Handle Ollama tool calls if present
             if message.get("tool_calls"):
@@ -113,7 +118,10 @@ class LMStudioClient:
         self.model = model or getattr(settings, "LMSTUDIO_MODEL", "local-model")
 
         # Initialize AsyncOpenAI with local LM Studio URL and dummy key
-        self.client = AsyncOpenAI(base_url=self.base_url, api_key="lm-studio")
+        # The gateway owns retries; SDK retries would multiply them.
+        self.client = AsyncOpenAI(
+            base_url=self.base_url, api_key="lm-studio", max_retries=0
+        )
         self.provider = "lmstudio"
         self.max_context = 12000
 
@@ -149,7 +157,11 @@ class LMStudioClient:
             response = await self.client.chat.completions.create(**params)
             message = response.choices[0].message
 
-            result = {"content": message.content or "", "raw_response": response}
+            result = {
+                "content": message.content or "",
+                "raw_response": response,
+                "usage": usage_from_openai(response),
+            }
 
             if message.tool_calls:
                 result["function_calls"] = [

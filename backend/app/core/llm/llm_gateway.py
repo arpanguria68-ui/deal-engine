@@ -431,6 +431,8 @@ class LLMGateway:
                         cached=result.get("cached", False),
                         fallback_used=result.get("fallback_used", False),
                         error=result.get("error"),
+                        input_tokens=(result.get("usage") or {}).get("input_tokens"),
+                        output_tokens=(result.get("usage") or {}).get("output_tokens"),
                     )
                 )
             return result
@@ -475,6 +477,67 @@ class LLMGateway:
                         "fallback_used": fallback_used,
                     }
                 )
+
+        # ── Per-run budget (see app.core.harness.trace.RunBudget). Checked
+        # after the cache: cache hits are free. ──
+        run_trace = current_trace()
+        if run_trace is not None:
+            over = run_trace.budget_exceeded()
+            if over:
+                run_trace.budget_blocked += 1
+                logger.warning("llm_budget_exceeded", agent=agent, reason=over)
+                return {
+                    "content": f"[Budget exceeded] {over}",
+                    "function_calls": [],
+                    "provider_used": "none",
+                    "tokens_est": 0,
+                    "cached": False,
+                    "fallback_used": False,
+                    "error": "budget_exceeded",
+                }
+            run_trace.inflight += 1
+        try:
+            return await self._call_providers(
+                provider,
+                actual_provider,
+                fallback_used,
+                prompt,
+                system_prompt,
+                tools,
+                max_tokens,
+                temperature,
+                messages,
+                est_in,
+                est_total,
+                cacheable,
+                agent,
+                started,
+                _finish,
+            )
+        finally:
+            if run_trace is not None:
+                run_trace.inflight -= 1
+
+    async def _call_providers(
+        self,
+        provider: str,
+        actual_provider: str,
+        fallback_used: bool,
+        prompt: str,
+        system_prompt: Optional[str],
+        tools: Optional[List[Dict]],
+        max_tokens: Optional[int],
+        temperature: float,
+        messages: List[Dict],
+        est_in: int,
+        est_total: int,
+        cacheable: bool,
+        agent: Optional[str],
+        started: float,
+        _finish: Callable[[Dict[str, Any]], Dict[str, Any]],
+    ) -> Dict[str, Any]:
+        """Execute against actual_provider, walking the fallback chain on failure."""
+        from app.core.llm import get_llm_client
 
         tried: List[str] = []
         last_error: Optional[Exception] = None
@@ -524,7 +587,11 @@ class LLMGateway:
             )
 
         content = result.get("content", "") or ""
-        actual_tokens = self.counter.estimate(content) + est_in
+        usage = result.get("usage")
+        if usage:
+            actual_tokens = usage.get("input_tokens", 0) + usage.get("output_tokens", 0)
+        else:
+            actual_tokens = self.counter.estimate(content) + est_in
 
         # Register usage
         if actual_provider in self.limiters:

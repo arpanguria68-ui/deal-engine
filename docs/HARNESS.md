@@ -50,17 +50,29 @@ what is still open.
 | 19 | `BusinessAnalystAgent` built `AgentOutput` without the required `confidence` in **both** the success and error paths. | Agent could never return; report formatting always failed. | `confidence` supplied. |
 | 20 | `_node_parallel_analysis` zipped results against the full agent list rather than the scheduled ones. | One missing agent shifted results onto the wrong output keys. | Zips against the scheduled list; empty results marked `ERROR`. |
 
+### Round 2 enhancements
+
+| # | Change | Why |
+|---|--------|-----|
+| 21 | **Per-run budget** (`RunBudget(max_llm_calls, max_tokens)`). The gateway refuses calls once a run's budget is spent. In-flight calls are reserved, so parallel agents can't overshoot. Cache hits are free. Available via `run_deal(budget=)`, `POST /deals/{id}/run?max_llm_calls=&max_tokens=`, the CLI's `--max-llm-calls/--max-tokens`, or the workflow config `run_budget`. | Hard cost ceiling per deal. A spent budget degrades the run instead of crashing it. |
+| 22 | **Real token usage.** Clients return the provider's `usage` (OpenAI-compatible, Gemini, Ollama). The gateway and traces use it instead of the 4-chars/token estimate when present (`tokens_used`, `tokens_reported`). | Accurate rate limiting, budgets and dashboards. |
+| 23 | **No stacked retries.** The SDK's own retries are off (`max_retries=0`) on OpenAI, LM Studio and NVIDIA clients, so only the gateway retries. | One 429 no longer means up to 3 × 6 attempts. |
+| 24 | **JSON repair.** When an agent expects JSON (the default for `generate_with_tools`) and the final answer doesn't parse, the loop makes one repair call. The investment memo opts out because it's prose. | Fewer agents falling back to `{"reasoning": <raw text>}`. |
+| 25 | **Market research runs once.** On the first analysis pass, the screening output is reused (config `reuse_screening_market_output`). It still re-runs on loop-backs or when reviewer feedback targets it. | −1 full agent run per deal. |
+| 26 | **Compact issue-tree prompt.** Skill docs, sector prompts and bulky payloads are dropped, values truncated, total capped at 3 000 chars. | The planning call previously embedded the whole context. |
+| 27 | **Agent run context isolated per task.** `_current_context` is now ContextVar-backed. | Registry agents are shared, so concurrent runs overwrote each other's sector prompt and context. |
+| 28 | **Live progress.** Traces are registered when a run starts, and `running` shows in summaries. | `GET /api/v1/harness/traces/{deal_id}` can be polled mid-run. |
+| 29 | **Registry agents in the API.** The API reuses the registry's Project Manager and OFAS supervisor instead of building new ones per request. | No per-request agent/tool construction. |
+| 30 | **Compiler bug.** `ReportCompilerAgent` read `res["result"]["data"]`, but tool results have always been `{name, success, data}`. | Generated report files were never returned. |
+| 31 | **Repo hygiene.** Committed logs, `*_out.txt` dumps and `.bak` files are untracked and ignored. | Repo noise. |
+
 ### Still open (recommendations, not changed here)
 
-- **Market research runs twice per deal.** Screening runs `market_researcher` and parallel analysis runs it again with nearly the same task. Reuse the screening output on the first pass (re-run only when peer review sends feedback to it).
-- **The issue tree costs an extra LLM call per agent**, and it dumps the whole context (including skill text) into the prompt as JSON. Consider making it opt-in per stage, or trimming the context first.
 - **Tool rounds replay the whole prompt.** Clients take a single `prompt` string, so every round re-sends the original prompt plus all results. Moving to multi-turn `messages` would let provider prompt caching apply.
-- **Token accounting is estimated** at 4 chars/token. Real `usage` from provider responses is ignored, so budgets and the usage dashboard are approximate.
-- **SDK retries stack on gateway retries.** The OpenAI SDK retries twice by default, on top of the gateway's retries. Set `max_retries=0` on SDK clients once the gateway is the only retry layer.
-- **Per-request agent construction in `main.py`.** `ProjectManagerAgent()` and `OFASSupervisorAgent()` are built per request. This is cheaper now with shared tools, but should still come from the registry.
-- **Default routing is local-first** (LM Studio). Now it degrades gracefully, but in container deployments the default should be a cloud provider.
-- **Repo hygiene.** Tracked log files (`backend/*.log`, `docs/legacy_dealforge/*.log`), `.bak` files, generated `.pptx` outputs, `*_out.txt`, and a 19 MB `Knowledge managerment/` folder with zips. `backend/data/agent_quality.db` is tracked and mutated by every run. Add these to `.gitignore` and untrack them.
-- **Existing test suites are broken** independently of this change: `backend/tests/evals` is 20 failed / 3 passed on the original code (MCP signature mismatches, `NameError`s, imports), and most root `tests/` need live keys or fail on import. `app/main.py` is a 3 000-line monolith that would benefit from splitting into routers.
+- **The issue tree is still one extra LLM call per agent** (now with a compact prompt). Consider making it opt-in per deal stage.
+- **Default routing is local-first** (LM Studio). It degrades gracefully now, but in container deployments the default should be a cloud provider.
+- **Tracked data and outputs.** `backend/data/agent_quality.db` is tracked and mutated by every run, and generated `.pptx` outputs are tracked. Left as is because untracking them would delete local copies on pull. Decide whether they should live in git.
+- **Existing test suites are broken** independently of these changes: `backend/tests/evals` is 20 failed / 3 passed before and after (MCP signature mismatches, `NameError`s, imports). `app/main.py` (3 000 lines) would benefit from splitting into routers.
 
 ---
 
@@ -86,7 +98,8 @@ Agent.run()
 
 LLMGateway.call:
   availability check (health TTL / API key) → rate limit → cache →
-  per-provider semaphore → retry/backoff → fallback chain → trace record
+  run budget → per-provider semaphore → retry/backoff → fallback chain →
+  trace record (provider-reported tokens when available)
 ```
 
 ### Running agents (from `backend/`)
@@ -104,6 +117,9 @@ python -m app.core.harness.cli --provider gemini agent market_researcher \
 
 # the full deal workflow, saving the call-level trace
 python -m app.core.harness.cli --provider mock --trace-out trace.json deal --target "Acme Corp"
+
+# cap the run: at most 40 LLM calls / 300k tokens
+python -m app.core.harness.cli --max-llm-calls 40 --max-tokens 300000 deal --target "Acme Corp"
 ```
 
 The result goes to stdout as JSON and the trace summary goes to stderr. Omit
@@ -116,15 +132,17 @@ Every deal run through `DealOrchestrator.run_deal` is traced automatically:
 - `final_state["harness_trace"]`: summary (LLM calls, errors, cache hits,
   fallbacks, estimated tokens, tool calls/failures/dedup hits, per-agent
   breakdown). It is also returned by `POST /api/v1/deals/{id}/run`.
-- `GET /api/v1/harness/traces`: summaries of the last 50 runs.
+- `GET /api/v1/harness/traces`: summaries of the last 50 runs, including
+  runs still in progress (`running: true`).
 - `GET /api/v1/harness/traces/{deal_id}`: full call-level log.
 
 To trace anything else:
 
 ```python
-from app.core.harness import start_trace, agent_scope
+from app.core.harness import RunBudget, start_trace, agent_scope
 
-with start_trace("my-run") as trace, agent_scope("financial_analyst"):
+with start_trace("my-run", budget=RunBudget(max_llm_calls=20)) as trace, \
+        agent_scope("financial_analyst"):
     await agent.run(task, context)
 print(trace.summary())
 ```
@@ -159,4 +177,7 @@ python -m pytest tests/harness -q
 | Local health cache | `model_router.HEALTH_TTL_SECONDS` | 30 s |
 | Network retries | `llm_gateway.MAX_NETWORK_RETRIES` | 2 |
 | Graph step limit | workflow config `recursion_limit` | 60 |
+| Per-run spend cap | workflow config `run_budget` / `run_deal(budget=)` | none |
+| Reuse screening market output | workflow config `reuse_screening_market_output` | True |
+| JSON repair | `generate_with_tools(expect_json=)` | True |
 | Add a provider | `app.core.llm.register_llm_client(name, factory)` | — |

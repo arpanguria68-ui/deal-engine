@@ -97,7 +97,10 @@ RULES:
                 "\nDraft a complete investment memo following the structure above."
             )
 
-            result = await self.generate_with_tools(prompt, system_prompt=system_prompt)
+            # The memo is prose, not JSON
+            result = await self.generate_with_tools(
+                prompt, system_prompt=system_prompt, expect_json=False
+            )
             content = result.get("content", "")
 
             # Generate charts if infographic engine available

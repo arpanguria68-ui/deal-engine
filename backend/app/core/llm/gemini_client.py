@@ -5,6 +5,7 @@ import json
 import os
 import structlog
 from app.config import get_settings
+from app.core.llm.usage import usage_from_gemini, usage_from_openai
 
 logger = structlog.get_logger()
 
@@ -225,6 +226,7 @@ class GeminiClient:
                 "content": content,
                 "function_calls": function_calls,
                 "raw_response": response,
+                "usage": usage_from_gemini(response),
             }
 
         except Exception as e:
@@ -316,7 +318,10 @@ class OpenAIClient:
         from openai import AsyncOpenAI
 
         settings = get_settings()
-        self.client = AsyncOpenAI(api_key=api_key or settings.OPENAI_API_KEY)
+        # The gateway owns retries; SDK retries would multiply them.
+        self.client = AsyncOpenAI(
+            api_key=api_key or settings.OPENAI_API_KEY, max_retries=0
+        )
         self.model = model or settings.OPENAI_MODEL
         self.provider = "openai"
         self.max_context = 128000
@@ -353,7 +358,11 @@ class OpenAIClient:
 
         message = response.choices[0].message
 
-        result = {"content": message.content or "", "raw_response": response}
+        result = {
+            "content": message.content or "",
+            "raw_response": response,
+            "usage": usage_from_openai(response),
+        }
 
         if message.tool_calls:
             result["function_calls"] = [
@@ -436,7 +445,11 @@ class MistralClient:
 
         message = response.choices[0].message
 
-        result = {"content": message.content or "", "raw_response": response}
+        result = {
+            "content": message.content or "",
+            "raw_response": response,
+            "usage": usage_from_openai(response),
+        }
 
         if message.tool_calls:
             result["function_calls"] = [

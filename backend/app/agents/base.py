@@ -9,6 +9,7 @@ import structlog
 import json
 import re
 import asyncio
+import contextvars
 
 from app.core.llm import get_llm_client
 from app.core.llm.model_router import get_model_router
@@ -25,6 +26,14 @@ from app.core.validation.output_validator import (
 )
 
 logger = structlog.get_logger()
+
+# Per-run agent context, keyed by agent instance. Agents are shared singletons
+# (registry), so storing the run context on the instance let concurrent runs
+# overwrite each other's sector prompt / context. A ContextVar keeps each
+# asyncio task's value separate.
+_run_contexts: contextvars.ContextVar[Dict[int, Dict]] = contextvars.ContextVar(
+    "dealforge_agent_run_contexts", default={}
+)
 
 
 @dataclass
@@ -87,6 +96,15 @@ class BaseAgent(ABC):
             self.tools.register_default_tools(self.memory)
 
         self.logger = structlog.get_logger(agent=self.name)
+
+    @property
+    def _current_context(self) -> Optional[Dict]:
+        return _run_contexts.get().get(id(self))
+
+    @_current_context.setter
+    def _current_context(self, context: Optional[Dict]) -> None:
+        # Copy-on-write: never mutate a dict another task may be reading
+        _run_contexts.set({**_run_contexts.get(), id(self): context})
 
     @abstractmethod
     async def run(self, task: str, context: Optional[Dict] = None) -> AgentOutput:
@@ -281,8 +299,12 @@ class BaseAgent(ABC):
         system_prompt: Optional[str] = None,
         temperature: Optional[float] = None,
         max_tool_rounds: int = 3,
+        expect_json: bool = True,
     ) -> Dict[str, Any]:
         """Generate a response, letting the model call this agent's tools.
+
+        With expect_json (the default — nearly every agent parses JSON), a
+        final answer that isn't valid JSON gets one automatic repair call.
 
         Runs app.core.harness.tool_loop.ToolLoop through the LLM gateway
         (rate limiting, caching, fallback). Returns a dict with "content" and,
@@ -296,7 +318,7 @@ class BaseAgent(ABC):
         tools = self.tools.list_tools(agent_name=self.name)
 
         # Inject Sector Prompt dynamically
-        ctx = getattr(self, "_current_context", None) or {}
+        ctx = self._current_context or {}
         sector_prompt = ctx.get("sector_prompt")
         if sector_prompt:
             system_prompt = (system_prompt or "") + "\n\n" + sector_prompt
@@ -317,6 +339,7 @@ class BaseAgent(ABC):
             system_prompt=system_prompt,
             tools=tools,
             temperature=temperature,
+            expect_json=expect_json,
         )
 
     # ═══════════════════════════════════════════════════════════
@@ -460,7 +483,7 @@ Guidelines:
         tree_prompt = f"""You are generating a MECE issue tree for the following analysis task.
 
 Task: {task}
-Context: {json.dumps(context or {}, indent=2, default=str)}
+Context: {self._compact_context(context)}
 
 Generate a hypothesis-first issue tree with 3-6 MECE branches. Each branch must be:
 1. Mutually Exclusive: No overlap between branches
@@ -527,6 +550,32 @@ Respond with JSON:
                     ),
                 ],
             )
+
+    # Context keys that are instructions or bulky payloads, not facts about
+    # the deal; they bloat the issue-tree prompt without changing the tree.
+    _ISSUE_TREE_SKIP_KEYS = {
+        "skill_context",
+        "sector_prompt",
+        "branch_contexts",
+        "issue_tree",
+        "agent_outputs",
+        "agent_results",
+    }
+
+    def _compact_context(
+        self, context: Optional[Dict], max_value_chars: int = 400, max_total_chars: int = 3000
+    ) -> str:
+        """Small JSON view of the context for planning prompts."""
+        compact = {}
+        for key, value in (context or {}).items():
+            if key in self._ISSUE_TREE_SKIP_KEYS or value in (None, "", {}, []):
+                continue
+            text = value if isinstance(value, str) else json.dumps(value, default=str)
+            if len(text) > max_value_chars:
+                text = text[:max_value_chars] + "…"
+            compact[key] = text if not isinstance(value, (int, float, bool)) else value
+        rendered = json.dumps(compact, indent=2, default=str)
+        return rendered[:max_total_chars]
 
     def validate_mece(self, tree: IssueTreeNode) -> tuple[bool, List[str]]:
         """

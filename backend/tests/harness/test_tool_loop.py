@@ -108,7 +108,7 @@ async def test_disallowed_tool_is_not_executed(mock_llm, gateway):
     mock_llm.tool_call("secret", text="x").queue({"content": "done"})
 
     loop = ToolLoop(gateway, router, "tester")
-    resp = await loop.run("q", provider="mock", tools=only_echo)
+    resp = await loop.run("q", provider="mock", tools=only_echo, expect_json=False)
 
     assert forbidden.calls == 0
     assert resp["content"] == "done"

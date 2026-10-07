@@ -1088,15 +1088,29 @@ async def documents_delete(index_id: str):
 
 
 @app.post("/api/v1/deals/{deal_id}/run")
-async def run_deal_workflow(deal_id: str):
-    """Run complete deal workflow"""
+async def run_deal_workflow(
+    deal_id: str,
+    max_llm_calls: Optional[int] = None,
+    max_tokens: Optional[int] = None,
+):
+    """Run complete deal workflow (optionally capped by max_llm_calls / max_tokens)"""
+    from app.core.harness.trace import RunBudget
+
     logger.info("Running deal workflow", deal_id=deal_id)
 
     orchestrator = get_orchestrator_instance()
+    budget = (
+        RunBudget(max_llm_calls=max_llm_calls, max_tokens=max_tokens)
+        if max_llm_calls is not None or max_tokens is not None
+        else None
+    )
 
     # Run the workflow
     final_state = await orchestrator.run_deal(
-        deal_id=deal_id, deal_name=f"Deal-{deal_id[:8]}", context={"deal_id": deal_id}
+        deal_id=deal_id,
+        deal_name=f"Deal-{deal_id[:8]}",
+        context={"deal_id": deal_id},
+        budget=budget,
     )
 
     return {
@@ -1112,7 +1126,8 @@ async def run_deal_workflow(deal_id: str):
 
 @app.get("/api/v1/harness/traces")
 async def list_harness_traces():
-    """Summaries of the most recent deal-run traces (LLM/tool calls, tokens, latency)"""
+    """Summaries of the most recent deal-run traces (LLM/tool calls, tokens,
+    latency). Runs still in progress are included with running=true."""
     orchestrator = get_orchestrator_instance()
     return {"traces": [t.summary() for t in reversed(list(orchestrator.traces.values()))]}
 
@@ -1716,7 +1731,7 @@ async def create_todo_list(deal_id: str, body: Dict[str, Any]):
             # Auto-generate using ProjectManagerAgent template
             from app.agents.project_manager import ProjectManagerAgent
 
-            pm = ProjectManagerAgent()
+            pm = get_agent_registry().get("project_manager")
             result = await pm.run(
                 task=body.get("task", f"Analyze deal {deal_id}"),
                 context={
@@ -1798,7 +1813,7 @@ async def execute_todo_list(list_id: str):
     """Execute all pending tasks in the approved todo list."""
     from app.agents.project_manager import ProjectManagerAgent
 
-    pm = ProjectManagerAgent()
+    pm = get_agent_registry().get("project_manager")
     result = await pm.execute_all(list_id, agent_registry=get_agent_registry())
     return result
 
@@ -2751,7 +2766,7 @@ async def scrum_clarify(request: Request):
     configured_mcps = [p for p in mcp_status if p["configured"]]
     context["available_mcp_providers"] = configured_mcps
 
-    agent = ProjectManagerAgent()
+    agent = get_agent_registry().get("project_manager")
     result = await agent.generate_clarifying_questions(task, context)
     return result
 
@@ -2787,7 +2802,7 @@ async def scrum_plan(request: Request):
     context["user_answers"] = answers
     context["provided_data"] = provided_data
 
-    agent = ProjectManagerAgent()
+    agent = get_agent_registry().get("project_manager")
     result = await agent.generate_plan_with_risks(task, context)
     return result
 
@@ -2858,7 +2873,7 @@ async def ofas_create_mission(request: Request):
     try:
         from app.agents.ofas_supervisor import OFASSupervisorAgent
 
-        supervisor = OFASSupervisorAgent()
+        supervisor = get_agent_registry().get("ofas_supervisor")
         result = await supervisor.run(
             task=objective,
             context={
@@ -2906,7 +2921,7 @@ async def ofas_mission_status(deal_id: str):
     try:
         from app.agents.ofas_supervisor import OFASSupervisorAgent
 
-        supervisor = OFASSupervisorAgent()
+        supervisor = get_agent_registry().get("ofas_supervisor")
         result = await supervisor.run(
             task="status",
             context={"action": "get_status", "mission": mission},

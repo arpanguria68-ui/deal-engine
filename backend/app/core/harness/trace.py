@@ -5,9 +5,12 @@ A RunTrace collects every LLM call and tool call made while it is active.
 It is carried in a contextvar, so it follows the work into asyncio tasks
 spawned with gather()/create_task() without being passed around explicitly.
 
-    with start_trace("deal-123") as trace:
+    with start_trace("deal-123", budget=RunBudget(max_llm_calls=40)) as trace:
         await orchestrator.run_deal(...)
     print(trace.summary())
+
+A RunBudget caps LLM calls and/or tokens for the run; once it is spent the
+gateway refuses further calls (they return an error result instead).
 """
 
 import contextvars
@@ -19,6 +22,17 @@ from typing import Any, Dict, Iterator, List, Optional
 
 
 @dataclass
+class RunBudget:
+    """Spending cap for one run. None means unlimited."""
+
+    max_llm_calls: Optional[int] = None
+    max_tokens: Optional[int] = None
+
+    def to_dict(self) -> Dict[str, Optional[int]]:
+        return {"max_llm_calls": self.max_llm_calls, "max_tokens": self.max_tokens}
+
+
+@dataclass
 class LLMCallRecord:
     provider: str
     agent: Optional[str]
@@ -27,6 +41,9 @@ class LLMCallRecord:
     cached: bool = False
     fallback_used: bool = False
     error: Optional[str] = None
+    # Provider-reported counts, when the provider returns them
+    input_tokens: Optional[int] = None
+    output_tokens: Optional[int] = None
 
 
 @dataclass
@@ -47,9 +64,38 @@ class RunTrace:
     finished_at: Optional[float] = None
     llm_calls: List[LLMCallRecord] = field(default_factory=list)
     tool_calls: List[ToolCallRecord] = field(default_factory=list)
+    budget: Optional[RunBudget] = None
+    budget_blocked: int = 0
+    # Calls admitted by the budget but not yet finished. Counted against the
+    # call budget so parallel agents can't all pass the check at once.
+    inflight: int = 0
 
     def record_llm(self, record: LLMCallRecord) -> None:
         self.llm_calls.append(record)
+
+    def tokens_used(self) -> int:
+        """Provider-reported tokens where available, estimates otherwise.
+        Cache hits cost nothing."""
+        total = 0
+        for c in self.llm_calls:
+            if c.cached:
+                continue
+            if c.input_tokens is not None or c.output_tokens is not None:
+                total += (c.input_tokens or 0) + (c.output_tokens or 0)
+            else:
+                total += c.tokens_est
+        return total
+
+    def budget_exceeded(self) -> Optional[str]:
+        """Reason string if the run's budget is spent, else None."""
+        if self.budget is None:
+            return None
+        billable = sum(1 for c in self.llm_calls if not c.cached) + self.inflight
+        if self.budget.max_llm_calls is not None and billable >= self.budget.max_llm_calls:
+            return f"LLM call budget of {self.budget.max_llm_calls} reached"
+        if self.budget.max_tokens is not None and self.tokens_used() >= self.budget.max_tokens:
+            return f"token budget of {self.budget.max_tokens} reached"
+        return None
 
     def record_tool(self, record: ToolCallRecord) -> None:
         self.tool_calls.append(record)
@@ -83,15 +129,24 @@ class RunTrace:
             "name": self.name,
             "wall_ms": round((end - self.started_at) * 1000, 1),
             "llm_calls": len(self.llm_calls),
+            "billable_llm_calls": sum(1 for c in self.llm_calls if not c.cached),
             "llm_errors": sum(1 for c in self.llm_calls if c.error),
             "cache_hits": sum(1 for c in self.llm_calls if c.cached),
             "fallbacks": sum(1 for c in self.llm_calls if c.fallback_used),
             "tokens_est": sum(c.tokens_est for c in self.llm_calls),
+            "tokens_used": self.tokens_used(),
+            "tokens_reported": any(
+                c.input_tokens is not None or c.output_tokens is not None
+                for c in self.llm_calls
+            ),
             "tool_calls": len(self.tool_calls),
             "tool_failures": sum(1 for t in self.tool_calls if not t.success),
             "tool_dedup_hits": sum(1 for t in self.tool_calls if t.deduplicated),
             "providers": providers,
             "per_agent": per_agent,
+            "budget": self.budget.to_dict() if self.budget else None,
+            "budget_blocked_calls": self.budget_blocked,
+            "running": self.finished_at is None,
         }
 
     def to_dict(self) -> Dict[str, Any]:
@@ -119,9 +174,9 @@ def current_agent() -> Optional[str]:
 
 
 @contextmanager
-def start_trace(name: str) -> Iterator[RunTrace]:
-    """Activate a new RunTrace for the enclosed block."""
-    trace = RunTrace(name=name)
+def start_trace(name: str, budget: Optional[RunBudget] = None) -> Iterator[RunTrace]:
+    """Activate a new RunTrace (optionally budget-capped) for the enclosed block."""
+    trace = RunTrace(name=name, budget=budget)
     token = _current_trace.set(trace)
     try:
         yield trace
