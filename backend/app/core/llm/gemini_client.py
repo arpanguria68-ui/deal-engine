@@ -2,8 +2,10 @@
 # import google.generativeai as genai
 from typing import List, Dict, Any, Optional, AsyncGenerator
 import json
+import os
 import structlog
 from app.config import get_settings
+from app.core.llm.usage import usage_from_gemini, usage_from_openai
 
 logger = structlog.get_logger()
 
@@ -44,13 +46,18 @@ class GeminiClient:
             else:
                 logger.warning("Gemini API key not configured")
 
-    def _get_model(self, tools: Optional[List[Dict]] = None):
+    def _get_model(
+        self,
+        tools: Optional[List[Dict]] = None,
+        temperature: float = 0.7,
+        max_tokens: int = 8192,
+    ):
         """Get configured model instance"""
         generation_config = {
-            "temperature": 0.7,
+            "temperature": temperature,
             "top_p": 0.95,
             "top_k": 40,
-            "max_output_tokens": 8192,
+            "max_output_tokens": max_tokens,
         }
 
         if self.provider == "vertex":
@@ -162,6 +169,8 @@ class GeminiClient:
         system_prompt: Optional[str] = None,
         tools: Optional[List[Dict]] = None,
         temperature: float = 0.7,
+        max_tokens: int = 8192,
+        **kwargs,
     ) -> Dict[str, Any]:
         """
         Generate text using Gemini
@@ -176,7 +185,7 @@ class GeminiClient:
             Response dict with content and optional tool calls
         """
         try:
-            model = self._get_model(tools)
+            model = self._get_model(tools, temperature=temperature, max_tokens=max_tokens)
 
             # Build conversation
             if system_prompt:
@@ -217,6 +226,7 @@ class GeminiClient:
                 "content": content,
                 "function_calls": function_calls,
                 "raw_response": response,
+                "usage": usage_from_gemini(response),
             }
 
         except Exception as e:
@@ -308,7 +318,10 @@ class OpenAIClient:
         from openai import AsyncOpenAI
 
         settings = get_settings()
-        self.client = AsyncOpenAI(api_key=api_key or settings.OPENAI_API_KEY)
+        # The gateway owns retries; SDK retries would multiply them.
+        self.client = AsyncOpenAI(
+            api_key=api_key or settings.OPENAI_API_KEY, max_retries=0
+        )
         self.model = model or settings.OPENAI_MODEL
         self.provider = "openai"
         self.max_context = 128000
@@ -318,6 +331,9 @@ class OpenAIClient:
         prompt: str,
         system_prompt: Optional[str] = None,
         tools: Optional[List[Dict]] = None,
+        temperature: float = 0.7,
+        max_tokens: int = 4000,
+        **kwargs,
     ) -> Dict[str, Any]:
         """Generate using OpenAI"""
         messages = []
@@ -330,8 +346,8 @@ class OpenAIClient:
         params = {
             "model": self.model,
             "messages": messages,
-            "temperature": 0.7,
-            "max_tokens": 4000,
+            "temperature": temperature,
+            "max_tokens": max_tokens,
         }
 
         if tools:
@@ -342,7 +358,11 @@ class OpenAIClient:
 
         message = response.choices[0].message
 
-        result = {"content": message.content or "", "raw_response": response}
+        result = {
+            "content": message.content or "",
+            "raw_response": response,
+            "usage": usage_from_openai(response),
+        }
 
         if message.tool_calls:
             result["function_calls"] = [
@@ -398,6 +418,9 @@ class MistralClient:
         prompt: str,
         system_prompt: Optional[str] = None,
         tools: Optional[List[Dict]] = None,
+        temperature: float = 0.7,
+        max_tokens: int = 4000,
+        **kwargs,
     ) -> Dict[str, Any]:
         """Generate using Mistral SDK"""
         messages = []
@@ -410,8 +433,8 @@ class MistralClient:
         params = {
             "model": self.model,
             "messages": messages,
-            "temperature": 0.7,
-            "max_tokens": 4000,
+            "temperature": temperature,
+            "max_tokens": max_tokens,
         }
 
         if tools:
@@ -422,7 +445,11 @@ class MistralClient:
 
         message = response.choices[0].message
 
-        result = {"content": message.content or "", "raw_response": response}
+        result = {
+            "content": message.content or "",
+            "raw_response": response,
+            "usage": usage_from_openai(response),
+        }
 
         if message.tool_calls:
             result["function_calls"] = [

@@ -42,6 +42,11 @@ from app.agents.complex_reasoning_agent import ComplexReasoningAgent
 from app.agents.report_architect_agent import ReportArchitectAgent
 from app.agents.advanced_financial_modeler import AdvancedFinancialModelerAgent
 from app.core.halugate import HaluGateEngine, HaluGateSeverity
+from app.core.harness.trace import RunBudget, RunTrace, agent_scope, start_trace
+from app.core.decision import DecisionPolicy, decide
+
+# Traces of the most recent deal runs kept in memory for the harness API.
+MAX_KEPT_TRACES = 50
 
 logger = structlog.get_logger()
 
@@ -57,12 +62,21 @@ class DealOrchestrator:
         # Concurrency limiter: prevents API quota exhaustion
         max_concurrent = self.config.get("max_concurrent_agents", 4)
         self._agent_semaphore = asyncio.Semaphore(max_concurrent)
+        self.traces: Dict[str, RunTrace] = {}
         self.graph = self._build_graph()
 
     def _default_config(self) -> WorkflowConfig:
         """Default workflow configuration"""
         return {
             "max_iterations": 10,
+            "max_agent_retries": 1,
+            # Decision guardrails (app.core.decision.DecisionPolicy fields)
+            "decision_policy": {},
+            "recursion_limit": 60,
+            "reuse_screening_market_output": True,
+            # Per-run spending cap. The default is a runaway backstop (a normal
+            # deal uses ~10-60 calls); set None to disable.
+            "run_budget": {"max_llm_calls": 200, "max_tokens": None},
             "timeout_seconds": 300,
             "parallel_execution": True,
             "max_concurrent_agents": 4,
@@ -82,41 +96,38 @@ class DealOrchestrator:
         }
 
     def _register_agents(self):
-        """Register all available agents"""
-        # Financial agents
-        self.agent_registry.register(FinancialAnalystAgent())
-        self.agent_registry.register(ValuationAgent())
-        self.agent_registry.register(DCFLBOArchitectAgent())
+        """Ensure every agent the workflow uses is registered.
 
-        # Legal agents
-        self.agent_registry.register(LegalAdvisorAgent())
-        self.agent_registry.register(ComplianceAgent())
-
-        # Risk agents
-        self.agent_registry.register(RiskAssessorAgent())
-        self.agent_registry.register(MarketRiskAgent())
-
-        # Market and synthesis agents
-        self.agent_registry.register(MarketResearcherAgent())
-        self.agent_registry.register(DebateModeratorAgent())
-        self.agent_registry.register(ScoringAgent())
-
-        # Red Team agent
-        self.agent_registry.register(RedTeamAgent())
-
-        # Output Formatting agent
-        self.agent_registry.register(BusinessAnalystAgent())
-
-        # Deal lifecycle agents (used by chat pipeline)
-        self.agent_registry.register(CommercialDueDiligenceAgent())
-        self.agent_registry.register(InvestmentMemoAgent())
-        self.agent_registry.register(TreasuryCashAgent())
-        self.agent_registry.register(ProjectManagerAgent())
-        self.agent_registry.register(ReportCompilerAgent())
-        self.agent_registry.register(DataCuratorAgent())
-        self.agent_registry.register(ComplexReasoningAgent())
-        self.agent_registry.register(ReportArchitectAgent())
-        self.agent_registry.register(AdvancedFinancialModelerAgent())
+        get_agent_registry() already builds all of these; only construct the
+        ones that are missing instead of building a second copy of each.
+        """
+        required = [
+            FinancialAnalystAgent,
+            ValuationAgent,
+            DCFLBOArchitectAgent,
+            LegalAdvisorAgent,
+            ComplianceAgent,
+            RiskAssessorAgent,
+            MarketRiskAgent,
+            MarketResearcherAgent,
+            DebateModeratorAgent,
+            ScoringAgent,
+            RedTeamAgent,
+            BusinessAnalystAgent,
+            # Deal lifecycle agents (used by chat pipeline)
+            CommercialDueDiligenceAgent,
+            InvestmentMemoAgent,
+            TreasuryCashAgent,
+            ProjectManagerAgent,
+            ReportCompilerAgent,
+            DataCuratorAgent,
+            ComplexReasoningAgent,
+            ReportArchitectAgent,
+            AdvancedFinancialModelerAgent,
+        ]
+        for agent_cls in required:
+            if self.agent_registry.get(agent_cls.name) is None:
+                self.agent_registry.register(agent_cls())
 
         # HaluGate engine (not an agent, but a verification layer)
         self.halugate = HaluGateEngine()
@@ -237,7 +248,7 @@ class DealOrchestrator:
             self._should_continue_after_halugate,
             {
                 "report_architect": "report_architect",
-                "escalate": "complete",
+                "escalate": "decision",
                 "error": "error_handler",
             },
         )
@@ -274,7 +285,7 @@ class DealOrchestrator:
         workflow.add_conditional_edges(
             "error_handler",
             self._handle_error_decision,
-            {"complete": "complete", "retry": "screening"},
+            {"retry": "parallel_analysis", "degrade": "consistency_check"},
         )
 
         # Complete is terminal
@@ -306,7 +317,7 @@ class DealOrchestrator:
         state = add_stage_to_history(state, DealStage.SCREENING)
 
         # Basic validation - check if we have minimum required info
-        context = state.get("context", {})
+        context = (state.get("context") or {})
 
         if not context.get("target_company"):
             return update_state(
@@ -348,7 +359,7 @@ class DealOrchestrator:
         state = update_state(state, {"current_stage": DealStage.DUE_DILIGENCE})
         state = add_stage_to_history(state, DealStage.DUE_DILIGENCE)
 
-        context = state.get("context", {})
+        context = (state.get("context") or {})
         context["deal_id"] = state["deal_id"]
 
         # Define agents to run
@@ -360,14 +371,45 @@ class DealOrchestrator:
         ]
 
         # Extract peer review feedback if we are looping back
-        debate_output = state.get("debate_output", {})
+        debate_output = (state.get("debate_output") or {})
         peer_feedback = (
             debate_output.get("reviewer_feedback", []) if debate_output else []
         )
 
+        # Screening already ran market_researcher on this deal. On the first
+        # analysis pass (no loop-back, no reviewer feedback for it) reuse that
+        # output instead of paying for the same research twice.
+        first_pass = (
+            sum(1 for s in state.get("stage_history", []) if s == DealStage.DUE_DILIGENCE)
+            <= 1
+        )
+        if (
+            self.config.get("reuse_screening_market_output", True)
+            and first_pass
+            and state.get("market_output")
+            and not any(f.get("agent") == "market_researcher" for f in peer_feedback)
+        ):
+            agents_to_run = [a for a in agents_to_run if a[0] != "market_researcher"]
+            state = set_agent_state(state, "market_researcher", AgentState.COMPLETED)
+            self.logger.info("Reusing screening market output", deal_id=state["deal_id"])
+
+        # Error-handler retry: only re-run the agents that failed
+        if state.get("retry_failed_only"):
+            done = state.get("agent_states") or {}
+            agents_to_run = [
+                a for a in agents_to_run if done.get(a[0]) != AgentState.COMPLETED
+            ]
+            state = update_state(state, {"retry_failed_only": False})
+            self.logger.info(
+                "Retrying failed agents only",
+                deal_id=state["deal_id"],
+                agents=[a[0] for a in agents_to_run],
+            )
+
         if self.config.get("parallel_execution", True):
             # Run agents in parallel
             tasks = []
+            scheduled = []
             for agent_name, output_key in agents_to_run:
                 agent = self.agent_registry.get(agent_name)
                 if agent:
@@ -387,11 +429,13 @@ class DealOrchestrator:
                         agent, agent_specific_context, agent_name, output_key
                     )
                     tasks.append(task)
+                    scheduled.append((agent_name, output_key))
 
             results = await asyncio.gather(*tasks, return_exceptions=True)
 
-            # Process results
-            for (agent_name, output_key), result in zip(agents_to_run, results):
+            # Process results (zip with what was scheduled, so a missing agent
+            # can't shift results onto the wrong output keys)
+            for (agent_name, output_key), result in zip(scheduled, results):
                 if isinstance(result, Exception):
                     self.logger.error(f"Agent {agent_name} failed", error=str(result))
                     state = set_agent_state(state, agent_name, AgentState.ERROR)
@@ -400,6 +444,8 @@ class DealOrchestrator:
                     if output_data:
                         state = update_state(state, {output_key: output_data})
                         state = set_agent_state(state, agent_name, AgentState.COMPLETED)
+                    else:
+                        state = set_agent_state(state, agent_name, AgentState.ERROR)
 
         else:
             # Run agents sequentially
@@ -443,10 +489,10 @@ class DealOrchestrator:
         self.logger.info("Running consistency check", deal_id=state["deal_id"])
 
         agent_outputs = {
-            "financial_analyst": state.get("financial_output", {}),
-            "legal_advisor": state.get("legal_output", {}),
-            "risk_assessor": state.get("risk_output", {}),
-            "market_researcher": state.get("market_output", {}),
+            "financial_analyst": (state.get("financial_output") or {}),
+            "legal_advisor": (state.get("legal_output") or {}),
+            "risk_assessor": (state.get("risk_output") or {}),
+            "market_researcher": (state.get("market_output") or {}),
         }
 
         try:
@@ -478,13 +524,14 @@ class DealOrchestrator:
             try:
                 timeout = self.config.get("agent_timeout_seconds", 60)
 
-                result = await asyncio.wait_for(
-                    agent.run(
-                        f"Analyze {agent_name.replace('_', ' ')} aspects",
-                        context=context,
-                    ),
-                    timeout=timeout,
-                )
+                with agent_scope(agent_name):
+                    result = await asyncio.wait_for(
+                        agent.run(
+                            f"Analyze {agent_name.replace('_', ' ')} aspects",
+                            context=context,
+                        ),
+                        timeout=timeout,
+                    )
 
                 if result.success:
                     return agent_name, output_key, result.data
@@ -507,7 +554,7 @@ class DealOrchestrator:
         agent = self.agent_registry.get("advanced_financial_modeler")
         if agent and state.get("financial_output"):
             try:
-                ctx = state.get("context", {}).copy()
+                ctx = (state.get("context") or {}).copy()
                 ctx["financial_data"] = state["financial_output"].get(
                     "financial_metrics", {}
                 )
@@ -532,7 +579,7 @@ class DealOrchestrator:
         agent = self.agent_registry.get("data_curator")
         if agent:
             try:
-                ctx = state.get("context", {}).copy()
+                ctx = (state.get("context") or {}).copy()
                 ctx["agent_outputs"] = {
                     "financial": state.get("financial_output"),
                     "advanced_financial": state.get("advanced_financial_output"),
@@ -578,7 +625,7 @@ class DealOrchestrator:
         agent = self.agent_registry.get("report_architect")
         if agent:
             try:
-                ctx = state.get("context", {}).copy()
+                ctx = (state.get("context") or {}).copy()
                 result = await agent.run(
                     "Configure report blueprint",
                     context=ctx,
@@ -685,19 +732,19 @@ class DealOrchestrator:
             try:
                 # Collect all agent outputs for cross-checking
                 agent_outputs = {
-                    "financial_analyst": state.get("financial_output", {}),
-                    "legal_advisor": state.get("legal_output", {}),
-                    "risk_assessor": state.get("risk_output", {}),
-                    "market_researcher": state.get("market_output", {}),
+                    "financial_analyst": (state.get("financial_output") or {}),
+                    "legal_advisor": (state.get("legal_output") or {}),
+                    "risk_assessor": (state.get("risk_output") or {}),
+                    "market_researcher": (state.get("market_output") or {}),
                 }
 
                 result = await red_team_agent.run(
                     f"Red Team sweep for deal: {state['deal_name']}",
                     context={
                         "deal_id": state["deal_id"],
-                        "issue_tree": state.get("issue_tree", {}),
+                        "issue_tree": (state.get("issue_tree") or {}),
                         "agent_outputs": agent_outputs,
-                        "industry": state.get("context", {}).get("industry", ""),
+                        "industry": (state.get("context") or {}).get("industry", ""),
                     },
                 )
 
@@ -729,8 +776,8 @@ class DealOrchestrator:
         """Run HaluGate verification on scoring output"""
         self.logger.info("Running HaluGate verification", deal_id=state["deal_id"])
 
-        scoring_output = state.get("scoring_output", {})
-        financial_output = state.get("financial_output", {})
+        scoring_output = (state.get("scoring_output") or {})
+        financial_output = (state.get("financial_output") or {})
 
         if scoring_output and financial_output:
             try:
@@ -754,8 +801,9 @@ class DealOrchestrator:
                     severity_summary = self.halugate.get_severity_summary(results)
 
                     # Store results in context
-                    ctx = state.get("context", {})
+                    ctx = (state.get("context") or {})
                     ctx["halugate_results"] = {
+                        "verified": True,
                         "blocked": blocked,
                         "severity_summary": severity_summary,
                         "total_claims_checked": len(results),
@@ -784,6 +832,13 @@ class DealOrchestrator:
 
             except Exception as e:
                 self.logger.error("HaluGate verification failed", error=str(e))
+                ctx = (state.get("context") or {})
+                ctx["halugate_results"] = {
+                    "verified": False,
+                    "blocked": False,
+                    "error": str(e)[:300],
+                }
+                state = update_state(state, {"context": ctx})
 
         return state
 
@@ -878,8 +933,8 @@ class DealOrchestrator:
                 deal_info = {
                     "id": state["deal_id"],
                     "name": state.get("deal_name"),
-                    "target_company": state.get("context", {}).get("target_company"),
-                    "industry": state.get("context", {}).get("industry"),
+                    "target_company": (state.get("context") or {}).get("target_company"),
+                    "industry": (state.get("context") or {}).get("industry"),
                     "final_score": state.get("final_score"),
                     "status": "completed",
                     "created_at": state.get("started_at"),
@@ -937,56 +992,78 @@ class DealOrchestrator:
         return state
 
     async def _node_decision(self, state: DealState) -> DealState:
-        """Generate final decision"""
+        """Generate the final decision through the guarded decision policy"""
         self.logger.info("Generating decision", deal_id=state["deal_id"])
 
         state = update_state(state, {"current_stage": DealStage.DECISION})
         state = add_stage_to_history(state, DealStage.DECISION)
 
-        # Generate recommendation based on score
-        score = state.get("final_score", 0)
-        scoring_output = state.get("scoring_output", {})
-        risk_level = scoring_output.get("risk_level", "medium")
+        decision = decide(state, DecisionPolicy.from_config(self.config))
+        self.logger.info(
+            "Deal decision",
+            deal_id=state["deal_id"],
+            verdict=decision.verdict.value,
+            base=decision.base_verdict.value if decision.base_verdict else None,
+            caps=[c["gate"] for c in decision.caps_applied],
+            human_review=decision.requires_human_review,
+        )
 
-        if score >= 75 and risk_level in ["low", "moderate"]:
-            recommendation = "PROCEED - Strong investment opportunity"
-        elif score >= 60 and risk_level in ["low", "moderate", "high"]:
-            recommendation = "PROCEED WITH CAUTION - Address identified risks"
-        elif score >= 40:
-            recommendation = "HOLD - Requires further due diligence"
-        else:
-            recommendation = "REJECT - Does not meet investment criteria"
-
-        state = update_state(state, {"final_recommendation": recommendation})
-
-        return state
+        updates = {
+            "final_recommendation": decision.recommendation,
+            "decision": decision.to_dict(),
+            "awaiting_decision": decision.requires_human_review,
+        }
+        if decision.requires_human_review:
+            updates["decision_request"] = {
+                "type": "human_review",
+                "proposed_verdict": decision.verdict.value,
+                "reasons": decision.reasons,
+                "caps_applied": decision.caps_applied,
+            }
+        return update_state(state, updates)
 
     async def _node_error_handler(self, state: DealState) -> DealState:
-        """Handle errors in workflow"""
-        self.logger.error("Handling workflow error", deal_id=state["deal_id"])
+        """Handle failed analysis agents.
 
+        Retries only the agents that failed (up to max_agent_retries). If they
+        still fail, the run continues without them: they are recorded in
+        degraded_agents and the decision layer caps the verdict accordingly.
+        """
         error_agents = get_error_agents(state)
-
-        # Check if we should retry
         retry_count = state.get("retry_count", 0)
-        max_retries = 2
+        max_retries = self.config.get("max_agent_retries", 1)
+        self.logger.error(
+            "Handling workflow error",
+            deal_id=state["deal_id"],
+            failed=error_agents,
+            retry=retry_count,
+        )
 
+        agent_states = dict(state.get("agent_states") or {})
         if retry_count < max_retries:
+            for name in error_agents:
+                agent_states[name] = AgentState.PENDING
             return update_state(
                 state,
                 {
                     "retry_count": retry_count + 1,
-                    "error_message": f"Retrying after errors from: {', '.join(error_agents)}",
+                    "agent_states": agent_states,
+                    "retry_failed_only": True,
+                    "error_message": None,
                 },
             )
-        else:
-            return update_state(
-                state,
-                {
-                    "error_message": f"Max retries exceeded. Failed agents: {', '.join(error_agents)}",
-                    "final_recommendation": "ERROR - Workflow failed",
-                },
-            )
+
+        for name in error_agents:
+            agent_states.pop(name, None)  # no longer "in error": run proceeds without it
+        degraded = sorted(set((state.get("degraded_agents") or []) + error_agents))
+        return update_state(
+            state,
+            {
+                "agent_states": agent_states,
+                "degraded_agents": degraded,
+                "error_message": None,
+            },
+        )
 
     async def _node_complete(self, state: DealState) -> DealState:
         """Complete the workflow and flush provenance to DB."""
@@ -1020,7 +1097,7 @@ class DealOrchestrator:
     def _should_continue_to_analysis(self, state: DealState) -> str:
         """Determine if we should proceed to analysis"""
         if state.get("error_message"):
-            if "REJECT" in state.get("final_recommendation", ""):
+            if "REJECT" in (state.get("final_recommendation") or ""):
                 return "reject"
             return "error"
         return "analysis"
@@ -1029,7 +1106,12 @@ class DealOrchestrator:
         """Determine if we should proceed to Advanced Financial Modeler"""
         if has_errors(state):
             return "error"
-        required = ["financial_analyst", "legal_advisor", "risk_assessor"]
+        degraded = set(state.get("degraded_agents") or [])
+        required = [
+            a
+            for a in ["financial_analyst", "legal_advisor", "risk_assessor"]
+            if a not in degraded
+        ]
         if not all_agents_completed(state, required):
             return "wait"
         return "advanced_financial"
@@ -1066,7 +1148,7 @@ class DealOrchestrator:
         if has_errors(state):
             return "error"
 
-        debate_output = state.get("debate_output", {})
+        debate_output = (state.get("debate_output") or {})
         if debate_output.get("requires_revision", False):
             self.logger.info(
                 "Peer Review requested revisions. Looping back to analysis agents.",
@@ -1081,7 +1163,7 @@ class DealOrchestrator:
         if has_errors(state):
             return "error"
 
-        red_team_output = state.get("red_team_output", {})
+        red_team_output = (state.get("red_team_output") or {})
         max_severity = red_team_output.get("max_severity", 0)
         requires_loop = red_team_output.get("requires_loop_back", False)
 
@@ -1110,7 +1192,7 @@ class DealOrchestrator:
         if has_errors(state):
             return "error"
 
-        halugate_data = state.get("context", {}).get("halugate_results", {})
+        halugate_data = (state.get("context") or {}).get("halugate_results", {})
         if halugate_data.get("blocked", False):
             self.logger.error("HaluGate BLOCKED output — escalating")
             return "escalate"
@@ -1136,18 +1218,19 @@ class DealOrchestrator:
         return "complete"
 
     def _handle_error_decision(self, state: DealState) -> str:
-        """Decide how to handle errors"""
-        retry_count = state.get("retry_count", 0)
-        max_retries = 2
-
-        if retry_count < max_retries:
+        """Retry the failed agents, or continue degraded once retries are spent."""
+        if state.get("retry_failed_only"):
             return "retry"
-        return "complete"
+        return "degrade"
 
     # ===== Public API =====
 
     async def run_deal(
-        self, deal_id: str, deal_name: str, context: Dict[str, Any] = None
+        self,
+        deal_id: str,
+        deal_name: str,
+        context: Dict[str, Any] = None,
+        budget: Optional[RunBudget] = None,
     ) -> DealState:
         """
         Run complete deal workflow
@@ -1156,6 +1239,7 @@ class DealOrchestrator:
             deal_id: Unique deal identifier
             deal_name: Deal name
             context: Initial context data
+            budget: Spending cap for this run (defaults to config["run_budget"])
 
         Returns:
             Final workflow state
@@ -1165,11 +1249,30 @@ class DealOrchestrator:
         # Create initial state
         initial_state = create_initial_state(deal_id, deal_name, context)
 
+        if budget is None and self.config.get("run_budget"):
+            budget = RunBudget(**self.config["run_budget"])
+
+        with start_trace(f"deal:{deal_id}", budget=budget) as trace:
+            # Registered before the run so progress is visible while it runs
+            self.traces.pop(str(deal_id), None)
+            self.traces[str(deal_id)] = trace
+            while len(self.traces) > MAX_KEPT_TRACES:
+                self.traces.pop(next(iter(self.traces)))
+            final_state = await self._invoke_graph(deal_id, initial_state)
+
+        summary = trace.summary()
+        self.logger.info("Deal run trace", **summary)
+        return {**final_state, "harness_trace": summary}
+
+    async def _invoke_graph(self, deal_id: str, initial_state: DealState) -> DealState:
         # Run the graph
         # Note: LangGraph 0.0.48 uses ainvoke for async
         try:
             run_config = {
-                "recursion_limit": self.config.get("max_iterations", 10),
+                # LangGraph counts one step per node visit. The happy path
+                # alone is ~16 nodes, plus debate / red-team loop-backs, so
+                # the old limit of max_iterations (10) failed every run.
+                "recursion_limit": self.config.get("recursion_limit", 60),
                 "configurable": {"thread_id": str(deal_id)},
             }
             self.logger.info("Calling graph.ainvoke with config:", config=run_config)
@@ -1192,7 +1295,6 @@ class DealOrchestrator:
             import traceback
 
             err_trace = traceback.format_exc()
-            print(f"CRITICAL WORKFLOW ERROR:\n{err_trace}")
             self.logger.error(
                 "Workflow failed", deal_id=deal_id, error=str(e), traceback=err_trace
             )

@@ -3,7 +3,9 @@
 from typing import Dict, Any, List, Optional
 from dataclasses import dataclass
 from abc import ABC, abstractmethod
+import asyncio
 import json
+import threading
 import time
 import structlog
 
@@ -1017,6 +1019,29 @@ AGENT_TOOL_MAP: Dict[str, List[str]] = {
 }
 
 
+# Stateless tools are built once per process and shared by every agent's
+# router. Building them per agent meant ~38 tool objects (and their imports
+# and log lines) for each of the ~50 agent instances created at startup.
+_shared_tools: Optional[Dict[str, "BaseTool"]] = None
+_shared_tools_lock = threading.Lock()
+
+
+def _build_shared_tools() -> Dict[str, "BaseTool"]:
+    builder = ToolRouter()
+    builder._register_stateless_tools()
+    return builder.tools
+
+
+def get_shared_tools() -> Dict[str, "BaseTool"]:
+    global _shared_tools
+    if _shared_tools is None:
+        with _shared_tools_lock:
+            if _shared_tools is None:
+                _shared_tools = _build_shared_tools()
+                logger.info("Shared tool registry built", tools=len(_shared_tools))
+    return _shared_tools
+
+
 class ToolRouter:
     """Routes tool calls to appropriate tools with per-agent filtering"""
 
@@ -1026,10 +1051,15 @@ class ToolRouter:
 
     def register_tool(self, tool: BaseTool):
         self.tools[tool.name] = tool
-        self.logger.info("Registered tool", tool_name=tool.name)
+        self.logger.debug("Registered tool", tool_name=tool.name)
 
     def register_default_tools(self, pageindex_client=None):
-        """Register all tools"""
+        """Register all tools (shared stateless instances + per-agent document search)"""
+        self.tools.update(get_shared_tools())
+        if pageindex_client:
+            self.register_tool(DocumentSearchTool(pageindex_client))
+
+    def _register_stateless_tools(self):
         self.register_tool(FinancialCalculatorTool())
         self.register_tool(DuckDuckGoSearchTool())
         self.register_tool(WebScraperTool())
@@ -1045,9 +1075,6 @@ class ToolRouter:
             self.register_tool(StartupIntelligenceTool())
         except ImportError:
             self.logger.warning("StartupIntelligenceTool import failed")
-
-        if pageindex_client:
-            self.register_tool(DocumentSearchTool(pageindex_client))
 
         # Financial Data Integrations (FinanceDatabase & FinanceToolkit)
         try:
@@ -1279,11 +1306,23 @@ class ToolRouter:
         """Clear provenance context after agent finishes."""
         self._provenance_context = None
 
+    def allowed_tool_names(self, agent_name: Optional[str] = None) -> set:
+        return {t["function"]["name"] for t in self.list_tools(agent_name)}
+
     async def execute_function_calls(
-        self, function_calls: List[Dict]
+        self, function_calls: List[Dict], agent_name: Optional[str] = None
     ) -> List[ToolResult]:
-        results = []
-        for call in function_calls:
-            result = await self.execute(call["name"], call.get("args", {}))
-            results.append(result)
-        return results
+        """Execute calls concurrently. With agent_name, calls to tools outside
+        that agent's allowlist are refused instead of executed."""
+        allowed = self.allowed_tool_names(agent_name) if agent_name else None
+
+        async def run(call: Dict) -> ToolResult:
+            if allowed is not None and call["name"] not in allowed:
+                return ToolResult(
+                    success=False,
+                    data=None,
+                    error=f"Tool '{call['name']}' is not available to {agent_name}",
+                )
+            return await self.execute(call["name"], call.get("args", {}))
+
+        return list(await asyncio.gather(*(run(c) for c in function_calls)))

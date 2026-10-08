@@ -98,6 +98,13 @@ app = FastAPI(
     lifespan=async_lifespan,
 )
 
+# API key guard (opt-in via DEALFORGE_API_KEY). Added before CORS so CORS
+# stays the outer layer and 401 responses still carry CORS headers.
+from app.core.security import APIKeyMiddleware, llm_rate_limit, warn_if_open
+
+app.add_middleware(APIKeyMiddleware)
+warn_if_open()
+
 # CORS middleware
 app.add_middleware(
     CORSMiddleware,
@@ -507,7 +514,7 @@ async def generate_deal_report(deal_id: str, format: str = "pdf"):
 # ══════════════════════════════════════════════════════════════════
 
 
-@app.post("/api/v1/deals/{deal_id}/documents/generate")
+@app.post("/api/v1/deals/{deal_id}/documents/generate", dependencies=[Depends(llm_rate_limit)])
 async def generate_deal_documents(deal_id: str):
     """
     Generate & cache all report formats (PPTX, Excel, PDF) for a deal.
@@ -1087,16 +1094,30 @@ async def documents_delete(index_id: str):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@app.post("/api/v1/deals/{deal_id}/run")
-async def run_deal_workflow(deal_id: str):
-    """Run complete deal workflow"""
+@app.post("/api/v1/deals/{deal_id}/run", dependencies=[Depends(llm_rate_limit)])
+async def run_deal_workflow(
+    deal_id: str,
+    max_llm_calls: Optional[int] = None,
+    max_tokens: Optional[int] = None,
+):
+    """Run complete deal workflow (optionally capped by max_llm_calls / max_tokens)"""
+    from app.core.harness.trace import RunBudget
+
     logger.info("Running deal workflow", deal_id=deal_id)
 
     orchestrator = get_orchestrator_instance()
+    budget = (
+        RunBudget(max_llm_calls=max_llm_calls, max_tokens=max_tokens)
+        if max_llm_calls is not None or max_tokens is not None
+        else None
+    )
 
     # Run the workflow
     final_state = await orchestrator.run_deal(
-        deal_id=deal_id, deal_name=f"Deal-{deal_id[:8]}", context={"deal_id": deal_id}
+        deal_id=deal_id,
+        deal_name=f"Deal-{deal_id[:8]}",
+        context={"deal_id": deal_id},
+        budget=budget,
     )
 
     return {
@@ -1106,7 +1127,26 @@ async def run_deal_workflow(deal_id: str):
         "final_recommendation": final_state.get("final_recommendation"),
         "stage_history": final_state.get("stage_history", []),
         "completed_at": final_state.get("completed_at"),
+        "harness_trace": final_state.get("harness_trace"),
     }
+
+
+@app.get("/api/v1/harness/traces")
+async def list_harness_traces():
+    """Summaries of the most recent deal-run traces (LLM/tool calls, tokens,
+    latency). Runs still in progress are included with running=true."""
+    orchestrator = get_orchestrator_instance()
+    return {"traces": [t.summary() for t in reversed(list(orchestrator.traces.values()))]}
+
+
+@app.get("/api/v1/harness/traces/{deal_id}")
+async def get_harness_trace(deal_id: str):
+    """Full call-level trace of the latest run of a deal"""
+    orchestrator = get_orchestrator_instance()
+    trace = orchestrator.traces.get(deal_id)
+    if trace is None:
+        raise HTTPException(status_code=404, detail="No trace recorded for this deal")
+    return trace.to_dict()
 
 
 @app.get("/api/v1/deals/{deal_id}/status")
@@ -1144,9 +1184,12 @@ async def list_agents():
     return {"agents": registry.list_agents()}
 
 
-@app.post("/api/v1/agents/run", response_model=AgentRunResponse)
+@app.post("/api/v1/agents/run", response_model=AgentRunResponse, dependencies=[Depends(llm_rate_limit)])
 async def run_agent(request: AgentRunRequest):
     """Run a specific agent"""
+    from app.core.validation.chat_guard import enforce_prompts
+
+    enforce_prompts(request.task)  # before building/looking up any agent
     registry = get_agent_registry()
     agent = registry.get(request.agent_type)
 
@@ -1155,7 +1198,7 @@ async def run_agent(request: AgentRunRequest):
             status_code=404, detail=f"Agent '{request.agent_type}' not found"
         )
 
-    logger.info("Running agent", agent_type=request.agent_type, task=request.task)
+    logger.info("Running agent", agent_type=request.agent_type, task_chars=len(request.task))
 
     result = await agent.run(request.task, context=request.context)
 
@@ -1659,11 +1702,14 @@ async def websocket_endpoint(websocket: WebSocket):
 # ===== Codex Integration Routes =====
 
 
-@app.post("/api/v1/codex/generate")
+@app.post("/api/v1/codex/generate", dependencies=[Depends(llm_rate_limit)])
 async def generate_code(request: dict):
     """Generate code using OpenAI Codex"""
     from app.core.llm.gemini_client import OpenAIClient
 
+    from app.core.validation.chat_guard import enforce_prompts
+
+    enforce_prompts(request.get("prompt", ""))
     client = OpenAIClient(model=settings.CODEX_MODEL)
 
     try:
@@ -1684,7 +1730,7 @@ async def generate_code(request: dict):
 from app.core.tasks.task_manager import get_task_manager
 
 
-@app.post("/api/v1/deals/{deal_id}/tasks")
+@app.post("/api/v1/deals/{deal_id}/tasks", dependencies=[Depends(llm_rate_limit)])
 async def create_todo_list(deal_id: str, body: Dict[str, Any]):
     """Create a structured todo list for a deal analysis."""
     tm = get_task_manager()
@@ -1698,7 +1744,7 @@ async def create_todo_list(deal_id: str, body: Dict[str, Any]):
             # Auto-generate using ProjectManagerAgent template
             from app.agents.project_manager import ProjectManagerAgent
 
-            pm = ProjectManagerAgent()
+            pm = get_agent_registry().get("project_manager")
             result = await pm.run(
                 task=body.get("task", f"Analyze deal {deal_id}"),
                 context={
@@ -1775,12 +1821,12 @@ async def approve_todo_list(list_id: str):
     return {"success": True, "status": todo.status}
 
 
-@app.post("/api/v1/tasks/{list_id}/execute")
+@app.post("/api/v1/tasks/{list_id}/execute", dependencies=[Depends(llm_rate_limit)])
 async def execute_todo_list(list_id: str):
     """Execute all pending tasks in the approved todo list."""
     from app.agents.project_manager import ProjectManagerAgent
 
-    pm = ProjectManagerAgent()
+    pm = get_agent_registry().get("project_manager")
     result = await pm.execute_all(list_id, agent_registry=get_agent_registry())
     return result
 
@@ -1927,7 +1973,7 @@ async def search_startup(company: str, depth: str = "standard"):
 # ═══════════════════════════════════════════════════════════
 
 
-@app.post("/api/v1/chat/clarify")
+@app.post("/api/v1/chat/clarify", dependencies=[Depends(llm_rate_limit)])
 async def chat_clarify(request: Request):
     """
     Scrum Master Phase 1+2: Look at user prompt and determine data needs + clarifying questions.
@@ -2061,7 +2107,7 @@ async def chat_clarify_feedback(request: Request):
     return {"status": "ok", "deal_type": deal_type, "stored_questions": len(questions)}
 
 
-@app.post("/api/v1/chat/plan")
+@app.post("/api/v1/chat/plan", dependencies=[Depends(llm_rate_limit)])
 async def chat_plan(request: Request):
     """
     Scrum Master Phase 3: Create structured task plan after clarification.
@@ -2108,7 +2154,7 @@ async def chat_plan(request: Request):
     }
 
 
-@app.post("/api/v1/chat/execute-task")
+@app.post("/api/v1/chat/execute-task", dependencies=[Depends(llm_rate_limit)])
 async def chat_execute_task(request: Request):
     """Execute a single task from the scrum master's plan via the assigned agent."""
     from app.core.validation.chat_guard import check_prompt
@@ -2262,29 +2308,41 @@ async def gateway_usage():
     return gw.get_usage_stats()
 
 
-@app.post("/api/v1/gateway/call")
+@app.post("/api/v1/gateway/call", dependencies=[Depends(llm_rate_limit)])
 async def gateway_call(request: Request):
     """Make a direct LLM call through the gateway (with rate limiting + retry)."""
     from app.core.llm.llm_gateway import get_llm_gateway
 
+    from app.core.validation.chat_guard import enforce_prompts
+
     body = await request.json()
+    enforce_prompts(body.get("prompt") or " ", body.get("system_prompt"))
+    try:
+        max_tokens = min(max(int(body.get("max_tokens", 1024)), 1), 8192)
+        temperature = min(max(float(body.get("temperature", 0.7)), 0.0), 2.0)
+    except (TypeError, ValueError):
+        raise HTTPException(status_code=400, detail="max_tokens/temperature must be numbers")
     gw = get_llm_gateway()
     result = await gw.call(
         provider=body.get("provider", "gemini"),
         prompt=body.get("prompt", ""),
         system_prompt=body.get("system_prompt"),
-        max_tokens=body.get("max_tokens", 1024),
-        temperature=body.get("temperature", 0.7),
+        max_tokens=max_tokens,
+        temperature=temperature,
     )
+    result.pop("raw_response", None)  # SDK object: not JSON, may leak internals
     return result
 
 
-@app.post("/api/v1/gateway/hybrid")
+@app.post("/api/v1/gateway/hybrid", dependencies=[Depends(llm_rate_limit)])
 async def gateway_hybrid(request: Request):
     """Hybrid reasoning: local compress → cloud reason."""
     from app.core.llm.llm_gateway import get_llm_gateway
 
+    from app.core.validation.chat_guard import enforce_prompts
+
     body = await request.json()
+    enforce_prompts(body.get("question") or " ")
     gw = get_llm_gateway()
     result = await gw.hybrid_reasoning(
         question=body.get("question", ""),
@@ -2307,14 +2365,19 @@ async def update_gateway_limits(request: Request):
     body = await request.json()
     gw = get_llm_gateway()
     vendor = body.get("vendor", "gemini")
-    gw.update_vendor_limits(
-        vendor,
-        VendorLimits(
-            max_rpm=body.get("max_rpm", 50),
-            max_tpm=body.get("max_tpm", 100_000),
-            max_rpd=body.get("max_rpd", 10_000),
-        ),
-    )
+    if vendor not in gw.limiters:
+        raise HTTPException(status_code=400, detail=f"Unknown vendor '{vendor}'")
+    try:
+        limits = VendorLimits(
+            max_rpm=int(body.get("max_rpm", 50)),
+            max_tpm=int(body.get("max_tpm", 100_000)),
+            max_rpd=int(body.get("max_rpd", 10_000)),
+        )
+    except (TypeError, ValueError):
+        raise HTTPException(status_code=400, detail="Limits must be integers")
+    if min(limits.max_rpm, limits.max_tpm, limits.max_rpd) < 0:
+        raise HTTPException(status_code=400, detail="Limits must be non-negative")
+    gw.set_vendor_limits(vendor, limits)
     return {"status": "updated", "vendor": vendor}
 
 
@@ -2702,7 +2765,7 @@ async def mcp_search_company(request: Request):
 # ═══════════════════════════════════════════════════════════
 
 
-@app.post("/api/v1/scrum/clarify")
+@app.post("/api/v1/scrum/clarify", dependencies=[Depends(llm_rate_limit)])
 async def scrum_clarify(request: Request):
     """
     Phase 1 + 2 of the Scrum Master workflow:
@@ -2733,12 +2796,12 @@ async def scrum_clarify(request: Request):
     configured_mcps = [p for p in mcp_status if p["configured"]]
     context["available_mcp_providers"] = configured_mcps
 
-    agent = ProjectManagerAgent()
+    agent = get_agent_registry().get("project_manager")
     result = await agent.generate_clarifying_questions(task, context)
     return result
 
 
-@app.post("/api/v1/scrum/plan")
+@app.post("/api/v1/scrum/plan", dependencies=[Depends(llm_rate_limit)])
 async def scrum_plan(request: Request):
     """
     Phase 3 of the Scrum Master workflow:
@@ -2769,7 +2832,7 @@ async def scrum_plan(request: Request):
     context["user_answers"] = answers
     context["provided_data"] = provided_data
 
-    agent = ProjectManagerAgent()
+    agent = get_agent_registry().get("project_manager")
     result = await agent.generate_plan_with_risks(task, context)
     return result
 
@@ -2823,7 +2886,7 @@ async def ofas_list_templates():
     }
 
 
-@app.post("/api/v1/ofas/mission")
+@app.post("/api/v1/ofas/mission", dependencies=[Depends(llm_rate_limit)])
 async def ofas_create_mission(request: Request):
     """Create and plan an OFAS mission"""
     body = await request.json()
@@ -2836,11 +2899,14 @@ async def ofas_create_mission(request: Request):
 
     if not ticker or not objective:
         raise HTTPException(status_code=400, detail="ticker and objective are required")
+    from app.core.validation.chat_guard import enforce_prompts
+
+    enforce_prompts(objective, *[c for c in constraints if isinstance(c, str)])
 
     try:
         from app.agents.ofas_supervisor import OFASSupervisorAgent
 
-        supervisor = OFASSupervisorAgent()
+        supervisor = get_agent_registry().get("ofas_supervisor")
         result = await supervisor.run(
             task=objective,
             context={
@@ -2888,7 +2954,7 @@ async def ofas_mission_status(deal_id: str):
     try:
         from app.agents.ofas_supervisor import OFASSupervisorAgent
 
-        supervisor = OFASSupervisorAgent()
+        supervisor = get_agent_registry().get("ofas_supervisor")
         result = await supervisor.run(
             task="status",
             context={"action": "get_status", "mission": mission},

@@ -9,10 +9,13 @@ import structlog
 import json
 import re
 import asyncio
+import contextvars
 
 from app.core.llm import get_llm_client
 from app.core.llm.model_router import get_model_router
 from app.core.llm.llm_gateway import get_llm_gateway
+from app.core.harness.tool_loop import ToolLoop, ToolLoopConfig
+from app.core.json_helpers import extract_and_parse_json
 from app.core.memory.pageindex_client import PageIndexClient
 from app.core.tools.tool_router import ToolRouter
 from app.core.reflection.reflection_engine import ReflectionEngine, RewardEngine
@@ -23,6 +26,14 @@ from app.core.validation.output_validator import (
 )
 
 logger = structlog.get_logger()
+
+# Per-run agent context, keyed by agent instance. Agents are shared singletons
+# (registry), so storing the run context on the instance let concurrent runs
+# overwrite each other's sector prompt / context. A ContextVar keeps each
+# asyncio task's value separate.
+_run_contexts: contextvars.ContextVar[Dict[int, Dict]] = contextvars.ContextVar(
+    "dealforge_agent_run_contexts", default={}
+)
 
 
 @dataclass
@@ -85,6 +96,15 @@ class BaseAgent(ABC):
             self.tools.register_default_tools(self.memory)
 
         self.logger = structlog.get_logger(agent=self.name)
+
+    @property
+    def _current_context(self) -> Optional[Dict]:
+        return _run_contexts.get().get(id(self))
+
+    @_current_context.setter
+    def _current_context(self, context: Optional[Dict]) -> None:
+        # Copy-on-write: never mutate a dict another task may be reading
+        _run_contexts.set({**_run_contexts.get(), id(self): context})
 
     @abstractmethod
     async def run(self, task: str, context: Optional[Dict] = None) -> AgentOutput:
@@ -159,12 +179,16 @@ class BaseAgent(ABC):
                     )
                 )
 
-        # Step 3: Retrieve context per branch
-        branch_contexts = {}
-        for branch in issue_tree.sub_branches:
-            branch_contexts[branch.id] = await self.retrieve_context(
-                branch.hypothesis, top_k=3
+        # Step 3: Retrieve context per branch (independent lookups → concurrent)
+        retrieved = await asyncio.gather(
+            *(
+                self.retrieve_context(branch.hypothesis, top_k=3)
+                for branch in issue_tree.sub_branches
             )
+        )
+        branch_contexts = {
+            branch.id: ctx for branch, ctx in zip(issue_tree.sub_branches, retrieved)
+        }
 
         # Step 4: Execute the core run() with enriched context
         enriched_context = {
@@ -250,20 +274,42 @@ class BaseAgent(ABC):
             self.logger.error("Context retrieval failed", error=str(e))
             return []
 
+    async def llm_generate(
+        self,
+        prompt: str,
+        system_prompt: Optional[str] = None,
+        temperature: float = 0.7,
+        max_tokens: Optional[int] = None,
+    ) -> Dict[str, Any]:
+        """Plain (tool-less) generation through the LLM gateway, so it gets
+        rate limiting, fallback, caching and tracing like every other call."""
+        provider = await get_model_router().resolve_provider_for_agent(self.name)
+        return await get_llm_gateway().call(
+            provider=provider,
+            prompt=prompt,
+            system_prompt=system_prompt,
+            temperature=temperature,
+            max_tokens=max_tokens,
+            agent=self.name,
+        )
+
     async def generate_with_tools(
         self,
         prompt: str,
         system_prompt: Optional[str] = None,
         temperature: Optional[float] = None,
         max_tool_rounds: int = 3,
+        expect_json: bool = True,
     ) -> Dict[str, Any]:
-        """Generate response with tool calls, routed through LLM Gateway.
+        """Generate a response, letting the model call this agent's tools.
 
-        Supports iterative multi-round tool calling (up to max_tool_rounds).
-        All LLM calls go through the gateway for rate limiting, caching, and fallback.
+        With expect_json (the default — nearly every agent parses JSON), a
+        final answer that isn't valid JSON gets one automatic repair call.
+
+        Runs app.core.harness.tool_loop.ToolLoop through the LLM gateway
+        (rate limiting, caching, fallback). Returns a dict with "content" and,
+        when tools ran, "tool_results" / "function_calls".
         """
-        from app.core.llm.model_router import get_model_router
-
         # enforce deterministic default
         if temperature is None:
             temperature = 0.0
@@ -272,176 +318,29 @@ class BaseAgent(ABC):
         tools = self.tools.list_tools(agent_name=self.name)
 
         # Inject Sector Prompt dynamically
-        ctx = getattr(self, "_current_context", {})
+        ctx = self._current_context or {}
         sector_prompt = ctx.get("sector_prompt")
         if sector_prompt:
             system_prompt = (system_prompt or "") + "\n\n" + sector_prompt
 
-        # Get provider from router (respects UI settings)
-        model_router = get_model_router()
-        provider = model_router.get_provider_for_agent(self.name)
-        is_local_model = provider in ["ollama", "lmstudio", "mistral"]
+        # Resolve the provider up front (respects UI routing; skips an offline
+        # local server) so the tool-calling style matches the model that runs.
+        provider = await get_model_router().resolve_provider_for_agent(self.name)
 
-        gateway = get_llm_gateway()
-
-        # For local models, inject ReAct instructions and disable native tools
-        effective_tools = tools if (tools and not is_local_model) else None
-        if is_local_model and tools:
-            react_instructions = """
-You have access to the following tools:
-{}
-
-To use a tool, you MUST output a JSON block wrapped in Markdown like this:
-```json
-{{
-  "command": "tool_name",
-  "args": {{"arg1": "value1"}}
-}}
-```
-Do NOT wrap the JSON in any other formatting. Output only the JSON block to use a tool, or your final answer if no tools are needed.
-""".format(
-                json.dumps([t.get("function") for t in tools], indent=2)
-            )
-            system_prompt = (system_prompt or "") + "\n\n" + react_instructions
-
-        # ── Multi-round tool calling loop (up to max_tool_rounds) ──
-        accumulated_tool_results = []
-        all_function_calls = []
-        current_prompt = prompt
-        response = {}
-
-        for round_num in range(1, max_tool_rounds + 1):
-            # Route through LLM Gateway (rate limit, cache, fallback)
-            response = await gateway.call(
-                provider=provider,
-                prompt=current_prompt,
-                system_prompt=system_prompt,
-                tools=effective_tools,
-                temperature=temperature,
-            )
-
-            # Parse ReAct JSON for local models
-            if is_local_model and tools:
-                content = response.get("content", "")
-                print(f"DEBUG - Raw Local Content:\n{content}\n" + "="*40)
-                # Attempt to find JSON blocks both with and without code blocks
-                json_blocks = re.findall(
-                    r"```json\s*(\{.*?\})\s*```", content, re.DOTALL
-                )
-                if not json_blocks:
-                    # Fallback: look for any { } block that looks like it might be a tool call
-                    json_blocks = re.findall(
-                        r"(\{.*?\})", content, re.DOTALL
-                    )
-                function_calls = []
-                for block in json_blocks:
-                    try:
-                        parsed = json.loads(block)
-                        # Be flexible with tool call keys
-                        tool_name = parsed.get("command") or parsed.get("tool") or parsed.get("name") or parsed.get("call")
-                        if tool_name and isinstance(tool_name, str):
-                            args = parsed.get("args") or parsed.get("parameters") or parsed.get("params") or {}
-                            
-                            # If args is a string, it might be double-encoded JSON
-                            if isinstance(args, str):
-                                try:
-                                    args = json.loads(args)
-                                except:
-                                    pass
-                                    
-                            function_calls.append(
-                                {
-                                    "name": tool_name,
-                                    "args": args if isinstance(args, dict) else {},
-                                }
-                            )
-                    except json.JSONDecodeError:
-                        # Attempt JSON repair for common local LLM issues
-                        try:
-                            repaired = block.rstrip(",").rstrip()
-                            if not repaired.endswith("}"):
-                                repaired += "}"
-                            parsed = json.loads(repaired)
-                            tool_name = parsed.get("command") or parsed.get("tool") or parsed.get("name") or parsed.get("call")
-                            if tool_name and isinstance(tool_name, str):
-                                args = parsed.get("args") or parsed.get("parameters") or parsed.get("params") or {}
-                                
-                                # If args is a string, it might be double-encoded JSON
-                                if isinstance(args, str):
-                                    try:
-                                        args = json.loads(args)
-                                    except:
-                                        pass
-                                        
-                                function_calls.append(
-                                    {
-                                        "name": tool_name,
-                                        "args": args if isinstance(args, dict) else {},
-                                    }
-                                )
-                            self.logger.info("JSON repair succeeded for ReAct block")
-                        except json.JSONDecodeError:
-                            self.logger.warning(
-                                "Failed to parse/repair ReAct JSON block", block=block
-                            )
-                if function_calls:
-                    response["function_calls"] = function_calls
-
-            # Check if tool calls were requested
-            if not response.get("function_calls"):
-                break  # No more tool calls needed — exit loop
-
-            self.logger.info(
-                "Tool calls detected",
-                round=round_num,
-                calls=[c["name"] for c in response["function_calls"]],
-            )
-
-            # Execute tools
-            tool_results = await self.tools.execute_function_calls(
-                response["function_calls"]
-            )
-
-            round_results = []
-            for i, r in enumerate(tool_results):
-                round_results.append({
-                    "name": response["function_calls"][i]["name"],
-                    "success": r.success,
-                    "data": r.data,
-                    "error": r.error
-                })
-            accumulated_tool_results.extend(round_results)
-            all_function_calls.extend(response["function_calls"])
-
-            # Build follow-up prompt with accumulated results
-            tool_context = json.dumps(accumulated_tool_results, indent=2)
-            current_prompt = (
-                f"{prompt}\n\n--- TOOL EXECUTION RESULTS (Round {round_num}) ---\n"
-                f"{tool_context}\n\n"
-                f"Based on these results, either request additional tool calls if you need more data, "
-                f"or provide your final comprehensive analysis in the requested JSON format."
-            )
-
-        # If we did tool calls, do a final synthesis through the gateway
-        if accumulated_tool_results:
-            tool_context = json.dumps(accumulated_tool_results, indent=2)
-            final_prompt = (
-                f"{prompt}\n\n--- ALL TOOL RESULTS ---\n{tool_context}\n\n"
-                f"Based on all these results, provide your final comprehensive analysis "
-                f"in the requested JSON format. Ensure your output is purely JSON."
-            )
-            final_response = await gateway.call(
-                provider=provider,
-                prompt=final_prompt,
-                system_prompt=system_prompt,
-                temperature=temperature,
-            )
-            response["content"] = final_response.get("content", "")
-            response["tool_results"] = accumulated_tool_results
-            response["function_calls"] = all_function_calls
-            response["provider_used"] = final_response.get("provider_used", provider)
-
-        return response
+        loop = ToolLoop(
+            gateway=get_llm_gateway(),
+            tool_router=self.tools,
+            agent_name=self.name,
+            config=ToolLoopConfig(max_rounds=max_tool_rounds),
+        )
+        return await loop.run(
+            prompt=prompt,
+            provider=provider,
+            system_prompt=system_prompt,
+            tools=tools,
+            temperature=temperature,
+            expect_json=expect_json,
+        )
 
     # ═══════════════════════════════════════════════════════════
     #  Stage-Aware Prompt Injection (QA Flow 1 & 5)
@@ -584,7 +483,7 @@ Guidelines:
         tree_prompt = f"""You are generating a MECE issue tree for the following analysis task.
 
 Task: {task}
-Context: {json.dumps(context or {}, indent=2, default=str)}
+Context: {self._compact_context(context)}
 
 Generate a hypothesis-first issue tree with 3-6 MECE branches. Each branch must be:
 1. Mutually Exclusive: No overlap between branches
@@ -603,18 +502,18 @@ Respond with JSON:
 }}"""
 
         try:
-            llm = get_model_router().get_client_for_agent(self.name)
-            provider = get_model_router().get_provider_for_agent(self.name)
+            provider = await get_model_router().resolve_provider_for_agent(self.name)
 
             response = await get_llm_gateway().call(
                 provider=provider,
                 prompt=tree_prompt,
                 system_prompt="You are a McKinsey-trained structured problem solver. Return only valid JSON.",
                 temperature=0.0,
+                agent=self.name,
             )
-            tree_data = json.loads(
-                response["content"].strip().strip("```json").strip("```").strip()
-            )
+            tree_data = extract_and_parse_json(response["content"])
+            if not isinstance(tree_data, dict):
+                raise ValueError("issue tree response was not a JSON object")
 
             root = IssueTreeNode(
                 id="root",
@@ -651,6 +550,32 @@ Respond with JSON:
                     ),
                 ],
             )
+
+    # Context keys that are instructions or bulky payloads, not facts about
+    # the deal; they bloat the issue-tree prompt without changing the tree.
+    _ISSUE_TREE_SKIP_KEYS = {
+        "skill_context",
+        "sector_prompt",
+        "branch_contexts",
+        "issue_tree",
+        "agent_outputs",
+        "agent_results",
+    }
+
+    def _compact_context(
+        self, context: Optional[Dict], max_value_chars: int = 400, max_total_chars: int = 3000
+    ) -> str:
+        """Small JSON view of the context for planning prompts."""
+        compact = {}
+        for key, value in (context or {}).items():
+            if key in self._ISSUE_TREE_SKIP_KEYS or value in (None, "", {}, []):
+                continue
+            text = value if isinstance(value, str) else json.dumps(value, default=str)
+            if len(text) > max_value_chars:
+                text = text[:max_value_chars] + "…"
+            compact[key] = text if not isinstance(value, (int, float, bool)) else value
+        rendered = json.dumps(compact, indent=2, default=str)
+        return rendered[:max_total_chars]
 
     def validate_mece(self, tree: IssueTreeNode) -> tuple[bool, List[str]]:
         """

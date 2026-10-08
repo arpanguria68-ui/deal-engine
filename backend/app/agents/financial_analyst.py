@@ -226,7 +226,7 @@ Guidelines:
 Provide detailed calculation steps and final valuation."""
 
         # valuations should be reproducible; force low temperature
-        response = await self.llm.generate(
+        response = await self.llm_generate(
             prompt,
             self._build_system_prompt(),
             temperature=0.0,

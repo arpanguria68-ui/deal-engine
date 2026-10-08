@@ -248,6 +248,13 @@ class DealState(TypedDict, total=False):
     awaiting_decision: bool
     decision_request: Optional[Dict[str, Any]]
 
+    # Decision layer (app.core.decision): verdict, reasons, guardrail caps
+    decision: Optional[Dict[str, Any]]
+    # Agents that still failed after retries; the run continued without them
+    degraded_agents: Optional[List[str]]
+    # Set by the error handler so the next analysis pass only re-runs failures
+    retry_failed_only: bool
+
 
 class WorkflowConfig(TypedDict, total=False):
     """Configuration for workflow execution"""

@@ -230,7 +230,7 @@ Identify:
 4. Missing standard protections
 5. Recommendations for negotiation"""
 
-        response = await self.llm.generate(prompt, self._build_system_prompt())
+        response = await self.llm_generate(prompt, self._build_system_prompt())
 
         return {"contract_type": contract_type, "analysis": response["content"]}
 
@@ -249,7 +249,7 @@ Identify:
 3. Potential gaps
 4. Remediation recommendations"""
 
-        response = await self.llm.generate(prompt, self._build_system_prompt())
+        response = await self.llm_generate(prompt, self._build_system_prompt())
 
         return {
             "jurisdictions": jurisdictions,

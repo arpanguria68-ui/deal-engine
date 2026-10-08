@@ -11,6 +11,7 @@ Mimics how McKinsey staffs: try junior analyst first, escalate to partner if nee
 """
 
 import os
+import time
 from typing import Dict, Optional, Tuple
 import structlog
 import httpx
@@ -61,6 +62,19 @@ TASK_TYPE_ROUTING = {
 CLOUD_PROVIDERS = {"gemini", "vertex", "openai", "mistral", "nvidia"}
 LOCAL_PROVIDERS = {"ollama", "lmstudio"}
 
+# Settings attribute holding each cloud vendor's credential. A vendor with no
+# credential can't succeed, so routing skips it instead of burning a call.
+PROVIDER_CREDENTIALS = {
+    "gemini": "GEMINI_API_KEY",
+    "openai": "OPENAI_API_KEY",
+    "mistral": "MISTRAL_API_KEY",
+    "nvidia": "NVIDIA_API_KEY",
+    "vertex": "VERTEX_PROJECT_ID",
+}
+
+# How long a local health probe result is trusted before re-probing.
+HEALTH_TTL_SECONDS = 30.0
+
 
 class ModelRouter:
     """
@@ -78,8 +92,9 @@ class ModelRouter:
         # Use the user's default provider as cloud fallback instead of hardcoded gemini
         self.cloud_fallback = self.fallback_provider if self.fallback_provider in CLOUD_PROVIDERS else "gemini"
 
-        # Local LLM health cache
+        # Local LLM health cache: provider → healthy, provider → probe time
         self._local_health: Dict[str, bool] = {}
+        self._health_checked_at: Dict[str, float] = {}
 
         # Load routing table
         self.agent_routing = dict(DEFAULT_AGENT_ROUTING)
@@ -122,11 +137,11 @@ class ModelRouter:
                 async with httpx.AsyncClient(timeout=2.0) as client:
                     resp = await client.get(f"{url}/api/tags")
                     healthy = resp.status_code == 200
-                    self._local_health["ollama"] = healthy
-                    return healthy
             except Exception:
-                self._local_health["ollama"] = False
-                return False
+                healthy = False
+            self._local_health["ollama"] = healthy
+            self._health_checked_at["ollama"] = time.time()
+            return healthy
 
         elif provider == "lmstudio":
             url = settings.get("lmstudio_base_url", "http://localhost:1234/v1")
@@ -144,13 +159,39 @@ class ModelRouter:
                 async with httpx.AsyncClient(timeout=2.0) as client:
                     resp = await client.get(f"{url}/models")
                     healthy = resp.status_code == 200
-                    self._local_health["lmstudio"] = healthy
-                    return healthy
             except Exception:
-                self._local_health["lmstudio"] = False
-                return False
+                healthy = False
+            self._local_health["lmstudio"] = healthy
+            self._health_checked_at["lmstudio"] = time.time()
+            return healthy
 
         return True  # Cloud providers assumed always healthy
+
+    async def is_provider_available(self, provider: str) -> bool:
+        """Cheap availability check used by the gateway on every call.
+
+        Local providers: health probe, cached for HEALTH_TTL_SECONDS.
+        Cloud providers: credential configured. Other names (e.g. the harness
+        "mock" provider) are assumed available.
+        """
+        if provider in LOCAL_PROVIDERS:
+            checked = self._health_checked_at.get(provider, 0.0)
+            if time.time() - checked < HEALTH_TTL_SECONDS:
+                return self._local_health.get(provider, False)
+            return await self.check_local_health(provider)
+
+        cred_attr = PROVIDER_CREDENTIALS.get(provider)
+        if cred_attr is None:
+            return True
+        from app.config import get_settings
+
+        value = getattr(get_settings(), cred_attr, None) or os.environ.get(cred_attr)
+        return bool(value) and value not in ("***", "placeholder_key")
+
+    async def resolve_provider_for_agent(self, agent_name: str) -> str:
+        """Preferred provider for an agent if available, else the cloud fallback."""
+        provider, _ = await self.get_provider_with_fallback(agent_name)
+        return provider
 
     def get_provider_for_agent(self, agent_name: str) -> str:
         """Get the preferred LLM provider for a specific agent"""
@@ -168,7 +209,7 @@ class ModelRouter:
         preferred = self.get_provider_for_agent(agent_name)
 
         if preferred in LOCAL_PROVIDERS:
-            is_healthy = await self.check_local_health(preferred)
+            is_healthy = await self.is_provider_available(preferred)
             if is_healthy:
                 logger.info("Using local LLM", agent=agent_name, provider=preferred)
                 return preferred, False
